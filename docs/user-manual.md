@@ -1,193 +1,197 @@
-# 机器人数据记录器使用手册
+# Robot Recorder User Manual
 
-本手册供第一次接入本记录器的用户使用，前提是拿到维护者已配置好的树莓派；不包含从空白系统部署树莓派的步骤。树莓派接收话题并保存 MCAP 文件；机器人发布 ROS 2 话题；浏览器负责选择话题和控制录制。可直接使用带屏幕的机器人主机（如 Orin）打开网页，不一定需要操作笔记本。树莓派的桥已配置好；新接入的机器人需要安装自己的 Zenoh 桥。
+**English** | [简体中文](user-manual.zh-CN.md)
 
-新接入的机器人需要已有 ROS 2 Humble 或 Jazzy，并完成下面的一次性 Zenoh 桥安装和配置。首次安装需有互联网，正常录制时只需机器人与树莓派之间的局域网。日常使用只需连接设备、启动机器人上的桥，再从网页选择机器人正在发布的话题并开始录制。
+This guide is for first-time users receiving a Pi that the maintainer has already configured. It does not cover deploying the recorder onto a blank Pi. The robot publishes ROS 2 topics; the Pi receives them and saves MCAP files; the browser selects topics and controls recording. A robot host with a display, such as an Orin, can open the page directly. A separate operator laptop is optional. The Pi's Zenoh bridge is already prepared; a new robot needs its own bridge.
 
-## 正常使用流程
+The robot must already have ROS 2 Humble or Jazzy. Complete the one-time bridge setup below with internet access. Routine recording only needs the local robot-to-Pi network: connect the devices, start the robot bridge and publishers, then select topics in the browser.
 
-### 1. 连接设备并找到树莓派
+## Normal workflow
 
-先打开树莓派，等待启动完成。把蜂窝路由器的 LAN 口、树莓派和机器人接到**同一台以太网交换机**；如使用操作笔记本，也将它接入交换机。路由器提供局域网地址和蜂窝网络连接；本地录制不依赖蜂窝网络。当前使用的 IR2700-R 不提供本方案所需的 Wi-Fi 接入点。机器人已有的 Wi-Fi 可以保持连接。
+### 1. Connect the devices and find the Pi
 
-在机器人或操作笔记本的浏览器中输入完整网址：
+Power on the Pi and wait for it to boot. Connect the cellular router's LAN port, the Pi and the robot to the **same Ethernet switch**. Connect the operator laptop too if using one. The router supplies local addresses and cellular internet; local recording does not depend on cellular internet. The IR2700-R used in this setup does not provide the Wi-Fi access point needed for this arrangement. The robot's existing Wi-Fi can stay connected.
+
+On the robot or operator laptop, open the full address:
 
 **http://robot-recorder.local:8080**
 
-务必保留开头的 `http://` 和末尾的 `:8080`。首次配置机器人桥时，需要确认树莓派的**有线 IP**。在机器人或操作笔记本终端依次运行：
+Keep both `http://` and `:8080`. To configure a new robot bridge, first confirm the Pi's **wired IP**. Run these in a terminal on the robot or operator laptop:
 
 ```bash
 timeout 5 getent ahostsv4 robot-recorder.local | awk '{print $1}' | sort -u
 ssh -n recorder@robot-recorder.local 'ip -4 -brief address show dev eth0'
 ```
 
-树莓派 SSH 用户名通常为 **`recorder`**，密码请向维护者索取。首次连接若询问是否信任主机，核对主机信息后再确认；输入密码时不会显示字符。若维护者更改了用户名，请将命令中的 `recorder` 替换为实际用户名。
+The Pi's SSH username is usually **`recorder`**; ask the maintainer for its password. On first connection, check the host information before accepting it. Password entry does not display characters. Replace `recorder` in the commands if the maintainer uses another username.
 
-第一条命令查询 `.local` 名称对应的地址；树莓派同时连接 Wi-Fi 和有线网络时，**即使只返回一个地址，也可能是 Wi-Fi 地址**。第二条命令查询 `eth0`，它显示的才是配置桥所需的有线 IP。读取 `eth0` 行里的 IPv4 地址，不要包含 `/24` 等前缀长度。然后输入该地址，确认网页服务可访问：
+The first command resolves the `.local` name. If the Pi has both Wi-Fi and Ethernet, **even a single returned address may be its Wi-Fi address**. The second command checks `eth0`, the wired interface. Read its IPv4 address without `/24` or another prefix length. Enter that address below to check the web service:
 
 ```bash
-read -rp '树莓派有线 IP（eth0）: ' PI_IP
+read -rp 'Pi wired IP (eth0): ' PI_IP
 curl --noproxy '*' --connect-timeout 3 "http://$PI_IP:8080/api/status"
 ```
 
-应返回状态 JSON。若 `eth0` 没有 IPv4 地址，先检查树莓派的网线、交换机和路由器 DHCP；若名称无法解析，按文末“网页无法打开”排查。正常情况下无需更改机器人的 IP 或关闭机器人的 Wi-Fi。
+Expect a JSON status response. If `eth0` has no IPv4 address, check its cable, switch and router DHCP. If name resolution fails, see “Cannot open the page” below. Normally you do not need to change the robot's IP or disconnect its Wi-Fi.
 
-### 2. 自动安装并配置机器人桥（只需一次）
+### 2. Install and configure the robot bridge once
 
-机器人需要已安装 ROS 2 Humble 或 Jazzy，首次安装时还需连接互联网。下面的命令会从树莓派取得安装脚本，自动安装依赖、准备修复版 Zenoh 桥，并配置树莓派地址。**只需复制、粘贴命令，无需下载或传输安装包，也无需手动修改源码或执行构建步骤。**
+The robot needs ROS 2 Humble or Jazzy and internet access for installation. The following commands fetch the installer from the prepared Pi. It installs dependencies, prepares the corrected Zenoh bridge and configures the Pi address. **Copy and paste the commands; no manual package transfer, source editing or build commands are required.**
 
-在**机器人终端**粘贴下面整段命令，输入第 1 步从 `eth0` 确认的树莓派有线 IP。不确定地址时，先按第 1 步或文末“确认树莓派有线 IP”查询。
+In the **robot terminal**, paste the block below and enter the wired Pi address confirmed from `eth0` in step 1:
 
 ```bash
-read -rp '树莓派有线 IP: ' PI_IP
+read -rp 'Pi wired IP: ' PI_IP
 curl -q --noproxy '*' -f --retry 3 --retry-all-errors --connect-timeout 5 \
   "http://$PI_IP:8080/setup/install_robot_bridge.sh" -o /tmp/install_robot_bridge.sh &&
 bash /tmp/install_robot_bridge.sh --pi-url "http://$PI_IP:8080"
 ```
 
-按提示输入机器人的 sudo 密码，等待显示 `Setup complete`。脚本会自动识别 ROS 版本；如果同时安装了 Humble 和 Jazzy，会询问要使用哪个。首次安装会在后台自动完成本机编译，可能需要较长时间；用户不需要参与构建。如果安装中断，处理报错或恢复网络后，重新粘贴同一段命令即可。
+Enter the robot's sudo password when prompted and wait for `Setup complete`. The script detects the installed ROS distribution; if both Humble and Jazzy are present, it asks which to use. It automatically builds the bridge locally on first installation, which can take a while. If interrupted, fix the error or restore connectivity, then rerun the same block.
 
-安装后，程序和配置保存在机器人用户的 `~/robot-recorder/` 中。脚本默认使用 ROS 域 **0**，树莓派记录器使用域 **1**。启动桥后，按第 3 步在网页查看机器人正在发布的话题。修复版已在开发笔记本通过连续重启测试；Orin 上的实际运行仍需首次部署验证。
+The installed files and configuration are under the robot user's `~/robot-recorder/`. The default robot ROS domain is **0**; the Pi recorder uses domain **1**. After starting the bridge, use step 3 to check the robot's topics in the browser. The corrected bridge has passed repeated-restart tests on the development laptop; its first deployment on an Orin still needs on-device validation.
 
-### 3. 启动机器人桥（每次使用时）
+### 3. Start the robot bridge each time
 
-在**机器人终端**运行这一条命令，录制期间保持终端开启：
+Run this in the **robot terminal** and keep the terminal open during recording:
 
 ```bash
 bash ~/robot-recorder/tools/start_robot_bridge.sh
 ```
 
-每次使用时启动一个机器人桥即可，录制期间保持运行。启动前先退出之前手动运行的桥；如果原版桥由服务启动，先停止该服务。直接运行 `zenoh-bridge-ros2dds -c ...` 仍可能启动系统中的未修复版。
+Run one robot bridge at a time. Exit any earlier manually started bridge first; if an original bridge runs as a service, stop that service first. Running `zenoh-bridge-ros2dds -c ...` directly may launch the uncorrected system version.
 
-确认机器人的传感器和 ROS 节点已启动，正在发布需要记录的话题。然后在机器人或操作笔记本打开 **http://robot-recorder.local:8080**，界面的 ROS 域保持为 **1**，点击 `Refresh topics`。连接成功后，列表中应显示机器人自己的话题，接下来可直接选择并录制。若没有显示预期话题，按文末“看不到机器人话题”排查。
+Start the robot's sensors and ROS publishers. On the robot or operator laptop, open **http://robot-recorder.local:8080**, keep the UI's ROS domain at **1**, and click `Refresh topics`. The robot's topics should appear. If expected topics are missing, see the troubleshooting section.
 
-### 4. 开始录制
+### 4. Record and inspect data
 
-1. 确认机器人上的桥仍在运行，在机器人或操作笔记本打开 **http://robot-recorder.local:8080**，等待状态显示 `Ready to record`（可以开始录制）。界面的 ROS 域保持为 **1**。
-2. 点击 `Refresh topics`，选择需要保存的话题。需要把长录制分成多个文件时，在 `Split MCAP files` 中填写按大小切分的阈值（MiB）、按时长切分的阈值（秒），或两者都填；留空则不切分。设置好后点击 `Begin recording`。只有话题出现在列表中，并不代表它正在发送消息。
-3. 录制结束时点击 `Stop recording`，等待界面完成文件整理。整理期间不要关闭树莓派电源。
-4. 在 `Recordings on the Pi` 中点击对应录制的 `View topics`，核对各话题的消息数。切分后的多个 MCAP 文件仍属于同一次录制，可以展开查看每段文件；`View topics` 显示整次录制的汇总。`Download` 会把包含所有分段的 TAR 副本下载到当前浏览器所在设备；`Delete` 会永久删除树莓派上的该次录制及所有分段。
+1. Keep the robot bridge running, open **http://robot-recorder.local:8080**, and wait for `Ready to record`. Keep the UI's ROS domain at **1**.
+2. Click `Refresh topics` and select the topics to save. To split a long recording, enter a size in MiB, a duration in seconds, or both under `Split MCAP files`. Leave both blank to disable splitting. Click `Begin recording`. A listed topic is not proof that messages are currently arriving.
+3. Click `Stop recording` when finished and wait for finalization. Keep the Pi powered during this process.
+4. Under `Recordings on the Pi`, click the recording's `View topics` to inspect per-topic message counts. Split MCAP files belong to one recording: expand its file list to inspect segments; `View topics` summarizes the whole recording. `Download` saves a TAR copy containing all segments to the browser's computer. `Delete` permanently removes that recording and all its segments from the Pi.
 
-按大小切分的数值是触发切换的参考阈值，不是单个文件的严格上限：缓冲中的消息写入后，文件可能超过填写的大小。两项都填写时，先达到的条件触发切换；最后一段通常较短。网页显示“可以开始录制”，只说明记录器服务可用；是否真的收到数据，应以完成后的话题消息数和录制结果为准。MCAP 文件始终保存在树莓派上，除非用户主动下载副本。
+The size setting is a split trigger, not a strict file-size ceiling: buffered messages can make a segment exceed it. If both limits are set, the first reached triggers a new segment; the last is usually shorter. `Ready to record` confirms that the service is available. Confirm received data using the completed recording's message counts and result. Files remain on the Pi unless a user downloads a copy.
 
-## 可选增强：LoRa 远程控制
+## Optional enhancement: LoRa remote control
 
-在前面的局域网录制流程上，可增加配套 LoRa 电台和操作笔记本，用于远处的话题选择、开始/停止、状态查看和简要录制管理。按 [LoRa 使用说明](lora-remote.md) 安装控制端；安装包可由维护者离线交付，或从 [GitHub](https://github.com/FCosx/recorder-lora-remote) 下载。首次配对口令由维护者私下提供。
+Add compatible LoRa radios and an operator laptop for topic selection, Start/Stop, status and brief recording management from a distance. Follow the [LoRa Remote Guide](lora-remote.md). The installer can be supplied offline by the maintainer or downloaded from [GitHub](https://github.com/FCosx/recorder-lora-remote). The maintainer supplies the initial pairing passcode privately.
 
-LoRa 操作笔记本不需要树莓派 IP、SSH 或接入现场网络；机器人与树莓派之间的以太网/Zenoh 数据链路仍须保持。MCAP 文件保存在树莓派；下载录制使用局域网页面。局域网页面可独立完成录制、切包、查看、下载和删除，无需配置 LoRa。
+The LoRa laptop needs no Pi IP, SSH or access to the site network. Keep the robot-to-Pi Ethernet/Zenoh data link running. MCAP files are saved on the Pi; use the local network page to download them. The local page independently supports recording, splitting, inspection, downloads and deletion without LoRa setup.
 
-## 遇到问题时
+## Troubleshooting
 
-### 确认树莓派有线 IP
+### Confirm the Pi's wired IP
 
-在**机器人或操作笔记本终端**运行：
+On the **robot or operator laptop**:
 
 ```bash
 timeout 5 getent ahostsv4 robot-recorder.local | awk '{print $1}' | sort -u
 ```
 
-名称查询只返回地址，不标注它属于哪个网口。树莓派同时连接有线和 Wi-Fi 时，可能只返回 Wi-Fi 地址，因此用下面的命令确认有线 IP：
+Name resolution does not label which interface owns an address. With both Wi-Fi and Ethernet on the Pi, it may return only Wi-Fi. Confirm Ethernet separately:
 
 ```bash
 ssh recorder@robot-recorder.local 'ip -4 -brief address show dev eth0'
 ```
 
-SSH 用户名与密码说明见第 1 步。读取 `eth0` 行的 IPv4 地址，填写安装提示时不要带 `/24` 等前缀长度。即使 SSH 通过 Wi-Fi 地址连接，这条命令查询的仍是树莓派的有线网口。
+Use the login details described in step 1. Enter the IPv4 address without `/24` when configuring the bridge. The command still checks Ethernet even if SSH itself connects over Wi-Fi.
 
-如需确认树莓派是否也连接 Wi-Fi，可运行：
+To inspect the Pi's Wi-Fi address:
 
 ```bash
 ssh recorder@robot-recorder.local 'ip -4 -brief address show dev wlan0'
 ```
 
-`wlan0` 行若有 IPv4 地址，说明该无线网口当前配置了 IPv4；机器人桥仍应填写前面查到的 `eth0` 地址。若名称查询没有输出，请检查树莓派是否已开机、网线是否连接；也可到路由器 DHCP 设备列表查找树莓派的有线租约，按下面的排查步骤处理，不要猜测 IP。
+An IPv4 address on `wlan0` indicates that the wireless interface is configured. Use the `eth0` address for the robot bridge. If the name does not resolve, check power and cables, or find the wired lease in the router's DHCP device list. Do not guess an address.
 
-### 网页无法打开
+### Cannot open the page
 
-1. 确认输入的是 **`http://robot-recorder.local:8080`**，包含 `http://` 和 `:8080`。
-2. 在打开网页的设备上检查名称解析和网页响应：
+1. Use **`http://robot-recorder.local:8080`**, including `http://` and `:8080`.
+2. On the computer running the browser, check name resolution and direct access:
 
    ```bash
    getent ahostsv4 robot-recorder.local
    curl --noproxy '*' --max-time 5 http://robot-recorder.local:8080/api/status
    ```
 
-3. 如果名称无法解析，先确认树莓派已开机且网线已连接；到路由器 DHCP 设备列表查找 `robot-recorder`，或在树莓派上运行 `ip -4 -brief address show dev eth0`。若要使用 `.local` 名称，再在树莓派上检查 `systemctl is-active avahi-daemon.service`，并确认网络允许 mDNS 组播。名称服务未配置时，请联系维护者处理；也可先用有线 IP 访问。
-4. 如果命令行直连正常，但浏览器显示 **502**，请把 `robot-recorder.local` 加入浏览器或系统代理的“不使用代理”列表。
-5. 如果仍无法打开，到路由器的 DHCP 设备列表中查找树莓派地址，或在树莓派上运行 `ip -4 -brief address show eth0`，再试 `http://<树莓派IP>:8080`。同时检查 `systemctl is-active robot-recorder.service`。
+3. If the name does not resolve, check Pi power and Ethernet. Find `robot-recorder` in the router's DHCP device list, or run `ip -4 -brief address show dev eth0` on the Pi. For `.local` resolution, check `systemctl is-active avahi-daemon.service` on the Pi and ensure the network permits mDNS multicast. Ask the maintainer to configure name resolution if needed; a wired IP can be used in the meantime.
+4. If direct command-line access works but the browser shows **502**, add `robot-recorder.local` to the browser/system proxy bypass list.
+5. Try `http://<PI_WIRED_IP>:8080` using the confirmed wired IP. On the Pi, also check `systemctl is-active robot-recorder.service`.
 
-### 有线网络走错网口
+### Traffic uses the wrong interface
 
-如果机器人同时连接 Wi-Fi 和交换机，名称能解析但网页超时，先确认树莓派的**有线 IP**，再在机器人上检查路由和各网口地址：
+If the robot has both Wi-Fi and Ethernet, and the name resolves but the page times out, confirm the Pi's **wired IP**, then check routing on the robot:
 
 ```bash
-read -rp '树莓派有线 IP: ' PI_IP
-ip -4 route get "$PI_IP"             # dev 应是连接交换机的有线网口
-ip -4 -brief address                 # 查看有线网口是否有同网段地址
+read -rp 'Pi wired IP: ' PI_IP
+ip -4 route get "$PI_IP"             # dev should name the Ethernet interface connected to the switch
+ip -4 -brief address                 # Check for an Ethernet address on the same subnet
 ```
 
-若路由显示 Wi-Fi 网口，仅插上网线并不保证两个设备处于同一 IPv4 网段。
+Plugging in a cable does not guarantee both devices are on the same IPv4 subnet. If the route shows Wi-Fi, investigate the Ethernet address before changing anything.
 
-如果有线网口需要增加同网段地址，先请网络管理员分配该网段中未使用、且不会与 DHCP 自动分配冲突的地址，并确认地址前缀与树莓派有线网络一致。仅在 DHCP 列表中找不到一个地址，不能证明它未被其他设备占用。下面的命令只临时增加地址，不删除网口原有地址：
+If an additional same-subnet address is needed, ask the network administrator for an unused address that will not conflict with DHCP, with the correct prefix. Absence from a DHCP lease list alone does not prove an address is unused. These commands add a temporary address while retaining the interface's original address:
 
 ```bash
-read -rp '树莓派有线 IP: ' PI_IP
-read -rp '连接交换机的有线网口名: ' LAN_IF
-read -rp '该网段中未占用的 IPv4 地址/前缀: ' LAN_ADDR
-sudo ip -4 addr add "$LAN_ADDR" dev "$LAN_IF"  # 临时增加；重启后失效
-ip -4 route get "$PI_IP"                  # 应显示 dev 为上述有线网口
+read -rp 'Pi wired IP: ' PI_IP
+read -rp 'Ethernet interface connected to the switch: ' LAN_IF
+read -rp 'Assigned unused IPv4 address/prefix on that subnet: ' LAN_ADDR
+sudo ip -4 addr add "$LAN_ADDR" dev "$LAN_IF"  # Temporary; lost after reboot
+ip -4 route get "$PI_IP"                  # dev should now be the Ethernet interface above
 curl --noproxy '*' --connect-timeout 3 "http://$PI_IP:8080/api/status"
 ```
 
-机器人重启后需重新配置临时地址，或由管理员将其设置为永久地址。Wi-Fi 不必关闭。若 `route get` 已显示正确的有线网口，直接检查网页响应，不要增加地址。
+Reapply the temporary address after a reboot or ask an administrator to configure it persistently. Wi-Fi can stay connected. If routing already uses the correct Ethernet interface, check the web response instead of adding an address.
 
-### 树莓派 IP 或机器人 ROS 域发生变化
+### The Pi IP or robot ROS domain changed
 
-先在桥的终端按 Ctrl+C。然后在**机器人终端**粘贴下面的命令，输入新的树莓派有线 IP；`--domain 0` 改为机器人实际话题所在的 ROS 域。此操作只更新配置，不重新安装：
+Press Ctrl+C in the bridge terminal. In the **robot terminal**, enter the new Pi wired IP and replace `--domain 0` with the robot publishers' actual domain. This updates the configuration without reinstalling:
 
 ```bash
-read -rp '树莓派有线 IP: ' PI_IP
+read -rp 'Pi wired IP: ' PI_IP
 bash /tmp/install_robot_bridge.sh --pi-url "http://$PI_IP:8080" --configure-only --domain 0
 bash ~/robot-recorder/tools/start_robot_bridge.sh
 ```
 
-如果临时安装脚本已被清理，先重新运行第 2 步的下载命令。
+If the temporary installer script was removed, first download it again using step 2.
 
-### 看不到机器人话题
+### Robot topics are missing
 
-确认机器人正在发布、机器人桥仍在运行，然后点击 `Refresh topics`。检查机器人桥的域与发布节点相同（本项目测试为 **0**）、网页使用 ROS 域 **1**，以及机器人配置文件 `robot.json5` 中的树莓派 IP。需要修改地址或 ROS 域时，使用上面的配置更新命令。机器人到树莓派的 TCP **7447** 端口也必须可达。
+Check that the robot is publishing and its bridge is running, then click `Refresh topics`. The robot bridge must use the publishers' domain (**0** in this project's tests); the Pi UI uses domain **1**. Check the Pi IP in the robot's `robot.json5`. Use the configuration update above if the IP or domain changed. TCP port **7447** must be reachable from the robot to the Pi.
 
-如果仍看不到话题，从机器人或操作笔记本运行 `ssh recorder@robot-recorder.local` 登录树莓派，再检查两个服务是否都显示 `active`：
+If topics remain missing, use `ssh recorder@robot-recorder.local` from the robot or operator laptop, then check both services on the **Pi**:
 
 ```bash
 systemctl is-active robot-recorder-bridge.service robot-recorder.service
 ```
 
-### 消息数异常偏高或发现重复
+Both should report `active`.
 
-先在机器人上检查桥进程：
+### Message counts are unusually high or duplicated
+
+On the **robot**, inspect bridge processes:
 
 ```bash
 pgrep -af '[z]enoh-bridge-ros2dds'
 ```
 
-应只有一个桥进程，程序路径应包含 `zenoh-bridge-ros2dds-fixed`。若是 `/usr/bin/zenoh-bridge-ros2dds`，先停止旧桥，再按第 3 步启动修复版。仅查看 `--version` 不能区分补丁，因为两者都显示 1.10.1。若确认使用修复版仍有重复，保留 bag 和日志交给维护者分析。
+There should be one bridge process, with a path containing `zenoh-bridge-ros2dds-fixed`. If it is `/usr/bin/zenoh-bridge-ros2dds`, stop the old bridge and start the corrected version using step 3. The version number alone does not identify the patch: both report 1.10.1.
 
-核对 `View topics` 中各话题的平均录制频率是否符合机器人的实际发布频率。若明显偏高或怀疑重复，保留 bag 和日志交给维护者分析。
+Compare the average recorded Hz in `View topics` with the robot's actual publishing rate. If counts remain suspicious with the corrected bridge, preserve the bag and logs for the maintainer.
 
-### 录制结果没有消息
+### A recording contains no messages
 
-先保持机器人发布节点运行，再从机器人或操作笔记本运行 `ssh recorder@robot-recorder.local` 登录树莓派。在**树莓派**上执行：
+Keep the robot publishers running and connect to the Pi with `ssh recorder@robot-recorder.local`. Run this on the **Pi**:
 
 ```bash
 source /opt/ros/jazzy/setup.bash
-read -rp '要检查的机器人话题名（以 / 开头）: ' TOPIC
+read -rp 'Robot topic to check (starting with /): ' TOPIC
 timeout 10 env -u ROS_LOCALHOST_ONLY \
   ROS_DOMAIN_ID=1 RMW_IMPLEMENTATION=rmw_cyclonedds_cpp \
   ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET \
   ros2 topic echo "$TOPIC" --once --no-arr
 ```
 
-输入需要检查的实际话题名。收到消息后会打印一条消息并退出，数组内容会省略。若 10 秒内没有输出，确认该话题此时确实在发送数据；低频或事件话题可能需要等待或触发。若持续发布的话题仍收不到消息，先检查桥接连接，再重新录制。
+This prints one message and exits, omitting array contents. If nothing arrives within ten seconds, check that the topic is currently publishing. Slow or event-driven topics may require more time or a trigger. If a continuously published topic is still silent, fix the bridge connection before recording again.
 
-网页目前没有登录功能，只应在可信任的局域网中使用。桥安装脚本及修复版桥由已配置好的树莓派提供，无需先克隆此 GitHub 仓库。
+The web page currently has no login; use it on a trusted local network. The prepared Pi supplies the bridge installer and corrected bridge resources. You do not need to clone this GitHub repository first.

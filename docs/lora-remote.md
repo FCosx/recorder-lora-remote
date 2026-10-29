@@ -1,12 +1,16 @@
-# 可选增强：LoRa 远程控制
+# Optional Enhancement: LoRa Remote Control
 
-记录器的主要使用方式是通过局域网页面控制树莓派录制。先按 [记录器使用手册](user-manual.md) 完成以太网与 Zenoh 设置；本页用于需要远距离控制的用户。
+**English** | [简体中文](lora-remote.zh-CN.md)
 
-通过 USB LoRa 电台选择 ROS 2 话题、开始/停止录制，并查看树莓派状态。数据保存在树莓派，不通过 LoRa 传输。
+The recorder's main interface is the Pi's local network page. First follow the [Recorder User Manual](user-manual.md) to set up Ethernet and Zenoh. This guide is for users adding control from a distance.
 
-## 首次安装
+Compatible USB LoRa radios let an operator laptop select ROS 2 topics, start/stop recording and view Pi status. Recordings remain on the Pi; sensor data does not travel over LoRa.
 
-需要 Linux、Python 3（建议 3.10 或更新）和 OpenSSL；无需 ROS、Zenoh 或自行编译。
+## First-time installation
+
+Use Linux, Python 3 (3.10 or newer recommended), OpenSSL, and the maintainer-supplied USB radio with its antenna. The remote laptop does not need ROS, Zenoh or a manual build.
+
+Download and install on the **operator laptop**:
 
 ```bash
 curl -fL --retry 3 --retry-all-errors \
@@ -15,56 +19,58 @@ curl -fL --retry 3 --retry-all-errors \
 python3 recorder-lora-remote.pyz install
 ```
 
-首次安装输入维护者提供的配对口令，输入时不显示字符。安装包包含加密配对文件；解密后的凭据仅保存于本机。已有配对更新时无需再次输入，原配对和命令编号会保留。
+On first installation, enter the pairing passcode supplied privately by the maintainer. Input is hidden. The installer contains encrypted pairing authorization; decrypted credentials are saved only on the laptop. Updating an already paired installation preserves its pairing and command counter without asking for the passcode again.
 
-下载需要互联网，也可用 U 盘复制安装包。安装及日常控制不需要树莓派 IP、SSH 或现场网络。
+Downloading requires internet. The maintainer can also supply the installer by USB drive for offline installation. Installation and operation do not require the Pi IP, SSH or access to the site network.
 
-## 每次使用
+## Everyday use
 
-接好天线，插入配套电台，关闭占用串口的程序，然后运行并保持终端开启：
+Attach the antenna, plug in the compatible radio and close programs using its serial port. Run this on the **operator laptop** and keep the terminal open:
 
 ```bash
 python3 -B ~/robot-recorder/tools/lora_recorder.py remote
 ```
 
-在**这台笔记本**打开 **http://127.0.0.1:8081**。等待 `Radio connected`，刷新话题并勾选所需项，然后开始/停止录制。关闭终端只会停止远程控制，不会结束树莓派正在进行的录制。同一配对只运行一个控制端。
+Open **http://127.0.0.1:8081** in **that laptop's browser**. Wait for `Radio connected`, click `Refresh topics`, select topics, and begin/stop recording. Closing the terminal stops remote control and status updates; it does not stop an ongoing recording on the Pi. Run only one control client for the same pairing at a time.
 
-状态请求在收到回复后默认等待 1 秒，再加无线传输时间。录制计时器会在本机连续递增并标为估计；大小、空间等数值以树莓派回复为准。
+By default, status requests wait one second after each reply, plus radio transmission time. The recording timer advances locally and is marked as estimated; size and free space use the latest Pi reply.
 
-开始前可设置 `Split MCAP files` 的 MiB 或秒数，留空关闭；两项都设置时先达到的条件触发切包。全部切分文件仍归于同一录制。右上角显示树莓派 CPU 温度与最近更新时间。
+Before starting, optionally set MiB and/or seconds under `Split MCAP files`. Leave blank to disable splitting. If both limits are set, the first reached starts a new segment; all segments belong to one recording. CPU temperature and the age of the last status update appear at the upper right.
 
-## 查看录制
+## View recordings
 
-`Refresh recordings` 每次加载 5 个已完成录制，显示名称、开始时间、大小、时长和消息数。`View topics` 加载话题及其消息数、Hz 和类型；`Delete` 确认后永久删除该录制的全部文件，仅空闲时可用。异常录制显示简短 Warning/Error 原因，详情在 `View topics` 中。列表及详情按需通过 LoRa 分块传输，不提供下载。树莓派代理需支持这些功能，由维护者更新。
+`Refresh recordings` loads five completed recordings per page, showing their names, start times, sizes, durations and message counts. `View topics` loads topic names, message counts, average Hz and types. `Delete` requires confirmation and permanently removes the recording and all its files; it is available only while the recorder is idle. Warning/Error badges include brief reasons, with more detail under `View topics`.
 
-录制结束后自动刷新最新一页一次，取得元数据后短暂显示实际时长。当前状态包含 MCAP 文件数；错误提示会保留，可用 `Dismiss` 收起。空间条与低空间状态清楚区分可录制和存储不足。
+Lists and details load on demand in small radio chunks. Downloads are available through the local Pi page, not the LoRa page. The Pi agent must support these features; the maintainer handles its updates.
 
-## 常见问题
+After recording finishes, the remote automatically refreshes the newest page once. When metadata arrives, it briefly shows the confirmed bag duration. Live status includes the MCAP file count. Action errors stay visible until dismissed with `Dismiss` or replaced by a new action. Storage indicators distinguish ready and low-storage states.
 
-- 串口权限不足：`sudo usermod -aG dialout "$USER"`，注销后重新登录。
-- 多个串口：在启动命令末尾添加 `--port /dev/ttyUSB0`，选择正确电台。
-- 找不到电台：检查 USB 连接及 CH340 驱动；BRLTTY 可能占用串口。
-- 缺少 OpenSSL：Ubuntu 运行 `sudo apt install openssl`。
-- 无线无回复：检查两端电源、天线、匹配的电台设置，以及树莓派录制/LoRa 服务。
+## Troubleshooting
 
-配对口令需私下交付；不要公开解密后的 `remote.json` 或私有预配对安装包。配对文件加密不等于无线数据加密。远距离效果需实测。
+- **Serial permission denied:** run `sudo usermod -aG dialout "$USER"`, then log out and back in.
+- **Multiple serial ports:** append `--port /dev/ttyUSB0` to the startup command, choosing the correct radio port.
+- **Radio not found:** check USB connections and the CH340 driver. BRLTTY may claim the serial interface.
+- **OpenSSL missing:** on Ubuntu, run `sudo apt install openssl`.
+- **No radio reply:** check power, antennas, matching radio settings, and the Pi's recorder/LoRa services.
 
-安装包含 pySerial 3.5，许可见 [第三方说明](../THIRD_PARTY_NOTICES.md)。
+Share the pairing passcode privately. Do not publish decrypted `remote.json` files or private pre-paired installers. Encrypting a pairing file does not encrypt the radio messages. Range must be tested at the actual location.
 
-## 状态更新间隔
+The installer includes pySerial 3.5; see [Third-party notices](../THIRD_PARTY_NOTICES.md).
 
-默认在每次状态回复后等待一秒，再发送下一次状态请求；无线传输和重试还需额外时间，并不保证每秒收到一次状态。按前面的普通启动命令即可使用，无需额外参数。页面显示 `1 s polling`，计时器仍在本机平滑递增。
+## Status update interval
 
-若远距离链路不稳定，或希望减少状态流量、为话题和录制列表留出更多无线容量，可按 Ctrl+C 停止控制程序，再改用两秒：
+The default is a one-second wait after each reply before the next status request. Transmission and retries take additional time, so this does not guarantee a fresh update every second. The normal startup command uses this default; the page shows `1 s polling`, and the timer remains smooth between replies.
+
+To reduce radio traffic and leave more capacity for topic/recording lists, press Ctrl+C, then restart with a two-second wait:
 
 ```bash
 python3 -B ~/robot-recorder/tools/lora_recorder.py remote --poll-seconds 2
 ```
 
-恢复默认一秒：按 Ctrl+C，再运行普通启动命令并刷新页面。每次只运行一个控制端；无需重新配对或重启树莓派。
+To restore one second, press Ctrl+C, restart normally and reload the page:
 
 ```bash
 python3 -B ~/robot-recorder/tools/lora_recorder.py remote
 ```
 
-此设置只影响 LoRa 状态轮询，不改变以太网/Zenoh 数据通道或录制参数。两秒版本 v0.4.0 仍保留供完整回退；远距离性能需在实际位置验证。
+Run only one client at a time. No re-pairing or Pi restart is needed. This option changes LoRa status polling only; Ethernet/Zenoh transport and recording settings stay the same. Release v0.4.0 remains available for a full rollback to the earlier two-second version. Check long-distance behavior in the intended environment.

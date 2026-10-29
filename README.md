@@ -1,43 +1,45 @@
 # Robot Recorder
 
-面向机器人实验的 ROS 2 数据记录器。机器人通过以太网和 Zenoh 将话题数据发送到树莓派；用户在同一局域网的浏览器中选择话题、控制录制，MCAP 文件保存在树莓派。
+**English** | [简体中文](README.zh-CN.md)
 
-## 主要功能
+A ROS 2 data recorder for robot experiments. Robots send topics to a Raspberry Pi over Ethernet and Zenoh. Users select topics and control recording through a browser on the local network; MCAP files are saved on the Pi.
 
-- 发现并选择需要录制的 ROS 2 话题。
-- 开始、停止录制，按文件大小或时长切分 MCAP。
-- 查看录制大小、时长、各话题消息数和平均 Hz，下载或删除录制。
-- 显示录制状态、剩余空间、CPU 温度和简短异常提示。
+## Main features
 
-## 第一次使用
+- Discover and select ROS 2 topics to record.
+- Start and stop recording; split MCAP files by size or duration.
+- Inspect recording size, duration, topic message counts and average Hz; download or delete recordings.
+- Monitor recording status, free space, CPU temperature and brief warnings.
 
-**从 [记录器使用手册（中文）](docs/user-manual.md) 开始。** 手册按正常流程提供可复制的命令，再列出特殊情况的排查方法：
+## First-time setup
 
-1. 将机器人、已配置好的树莓派和路由器 LAN 口接入同一交换机。
-2. 找到树莓派的有线 IP，在机器人上完成 Humble/Jazzy Zenoh 桥的一次性安装。
-3. 启动机器人桥和传感器，在局域网浏览器打开 **http://robot-recorder.local:8080**。
-4. 选择话题并录制，完成后查看、下载或删除录制。
+**Start with the [Recorder User Manual](docs/user-manual.md) ([中文](docs/user-manual.zh-CN.md)).** It provides copy-and-paste commands for the normal workflow, followed by troubleshooting for special cases:
 
-本手册适用于维护者已配置好的树莓派；机器人需已有 ROS 2 Humble 或 Jazzy。首次安装机器人桥需要互联网；日常局域网录制不依赖互联网。无需先克隆本仓库。
+1. Connect the robot, prepared Pi and router LAN port to the same Ethernet switch.
+2. Find the Pi's wired IP and install the robot's Humble/Jazzy Zenoh bridge once.
+3. Start the robot bridge and sensors, then open **http://robot-recorder.local:8080** from a browser on the local network.
+4. Select topics and record. Inspect, download or delete recordings afterward.
 
-## 日常使用
+The Pi must already be configured by the maintainer; the robot needs ROS 2 Humble or Jazzy. Installing the robot bridge requires internet access. Routine local recording does not. You do not need to clone this repository first.
 
-完成首次配置后，在**机器人终端**启动桥，录制期间保持运行：
+## Everyday use
+
+After first-time setup, run this in the **robot terminal** and keep it running during recording:
 
 ```bash
 bash ~/robot-recorder/tools/start_robot_bridge.sh
 ```
 
-启动机器人发布节点，然后在机器人或同网段电脑打开 **http://robot-recorder.local:8080**，选择话题并开始录制。停止后等待文件整理完成，再查看录制结果。
+Start the robot's publishers, then open **http://robot-recorder.local:8080** on the robot or another computer on the same subnet. Select topics and begin recording. After stopping, wait for finalization before inspecting the result.
 
-## 可选增强：LoRa 远程控制
+## Optional enhancement: LoRa remote control
 
-需要在局域网外操作时，可增加配套 USB LoRa 电台和操作笔记本，按 [LoRa 使用说明](docs/lora-remote.md) 安装控制端。它提供话题选择、开始/停止、状态查看及简要录制管理；传感器数据仍走机器人与树莓派之间的以太网/Zenoh 链路。
+For control outside the local network, add compatible USB LoRa radios and an operator laptop. Follow the [LoRa Remote Guide](docs/lora-remote.md) ([中文](docs/lora-remote.zh-CN.md)). It provides topic selection, Start/Stop, status and brief recording management. Sensor data continues over the robot-to-Pi Ethernet/Zenoh link.
 
-LoRa 控制端安装和日常操作不需要树莓派 IP 或现场网络，可离线交付安装包。GitHub 下载需互联网，首次配对口令由维护者私下提供。默认在每次状态回复后等待一秒；LoRa 页面不提供录制下载。
+The LoRa laptop can be installed offline and operated without the Pi's IP or access to the site network. GitHub downloads require internet; the maintainer supplies the first-time pairing passcode privately. Status polling waits one second after each reply by default. The LoRa page does not download recordings.
 
-## 仓库内容
+## Repository contents
 
-本仓库目前提供记录器使用手册，以及可选 LoRa 控制端的源码和 [安装包](https://github.com/FCosx/recorder-lora-remote/releases/latest)。树莓派录制服务由维护者预先配置。安装包中的配对授权经过加密；不公开树莓派登录密码或解密后的配对文件。
+This repository currently provides the recorder manuals and the optional LoRa client's source and [installer](https://github.com/FCosx/recorder-lora-remote/releases/latest). The maintainer prepares the Pi recording service separately. Pairing authorization in the public installer is encrypted; Pi login passwords and decrypted pairing files are kept private.
 
-LoRa 安装包包含 pySerial 3.5，许可见 [第三方说明](THIRD_PARTY_NOTICES.md)。
+The LoRa installer includes pySerial 3.5; see [Third-party notices](THIRD_PARTY_NOTICES.md).
