@@ -43,7 +43,7 @@ class Counter:
 
 
 class Remote:
-    def __init__(self, key, state_file, port, poll_seconds=5, timeout=8, attempts=3):
+    def __init__(self, key, state_file, port, poll_seconds=2, timeout=8, attempts=3):
         self.key = key
         self.state_file = state_file
         self.link = SerialLink(port)
@@ -76,6 +76,7 @@ class Remote:
                 "synchronized": self.synchronized,
                 "status": data, "pending": self.pending, "last_command": self.command,
                 "error": self.error, "poll_seconds": self.poll_seconds,
+                "fresh_seconds": FRESH_SECONDS,
                 "topics": self.catalog, "topics_revision": self.catalog_revision.hex(),
                 "topics_loading": self.topic_transfer is not None,
                 "topics_received_bytes": len(self.topic_transfer["data"]) if self.topic_transfer else 0,
@@ -238,7 +239,7 @@ class Remote:
                             self.synchronized = False
                             self.needs_refresh = True
                         LOG.info("%s: %s", op.name, RESULT_TEXT[result])
-                # A status request confirms progress after Start/Stop; otherwise poll every 5s.
+                # Wait after each reply; commands take priority over the next status poll.
                 if op == Op.SYNC and response is None:
                     self.stopped.wait(1)
                 if op != Op.TOPICS:

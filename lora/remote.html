@@ -38,7 +38,7 @@ footer{font-size:.85rem;color:#65778a;line-height:1.5}#browser-error{color:#a325
   <div id="notice" role="status" aria-live="polite">Connecting…</div><p id="warning" hidden></p>
  </section>
  <section class="panel metrics">
-  <div class="metric"><span>Recorded time</span><strong id="elapsed">—</strong></div>
+  <div class="metric"><span id="elapsed-label">Recorded time</span><strong id="elapsed">—</strong></div>
   <div class="metric"><span>Current bag</span><strong id="bag">—</strong></div>
   <div class="metric"><span>Pi free space</span><strong id="free">—</strong></div>
   <div class="metric"><span>CPU temperature</span><strong id="temp">—</strong></div>
@@ -47,14 +47,34 @@ footer{font-size:.85rem;color:#65778a;line-height:1.5}#browser-error{color:#a325
  <p id="browser-error" role="alert"></p>
  <footer>Files remain on the Pi. Losing radio contact does not stop recording.
   <details><summary>About radio updates and recording</summary><p>Topic lists load in small chunks over LoRa and may take time. Selected topics uses the fetched list; All available topics discovers the list at Start. New topics appearing later require a new recording.
-  Status is polled about every 5 seconds; the displayed values are the last received snapshot. Stop requests normal bag finalization on the Pi.</p></details></footer>
+  Status requests wait 2 seconds after each reply, plus radio transmission time. The recording timer advances locally between replies and is an estimate; other values show the latest Pi snapshot. Stop requests normal bag finalization on the Pi.</p></details></footer>
 </main>
 <script>
 const $=id=>document.getElementById(id);
-let sending=false,lastStatus=null,topicRevision=null,topicNames=[],chosen=new Set();
+let sending=false,stopRequestActive=false,lastStatus=null,topicRevision=null,topicNames=[],chosen=new Set();
 const names={idle:'Ready to record',starting:'Starting · waiting for topic data',recording:'Recording',stopping:'Finishing the bag',unavailable:'Pi recorder unavailable',unknown:'Waiting for Pi status'};
 function bytes(n){if(n==null)return '—';const units=['B','KiB','MiB','GiB'];let i=0;while(n>=1024&&i<3){n/=1024;i++}return n.toFixed(i?1:0)+' '+units[i]}
 function time(n){if(n==null)return '—';const s=Math.floor(n);return [Math.floor(s/3600),Math.floor(s/60)%60,s%60].map(v=>String(v).padStart(2,'0')).join(':')}
+class RecordingTimer{
+ constructor(){this.sample=null;this.at=0;this.held=null}
+ reading(now=performance.now()){
+  const d=this.sample,s=d?.status;
+  if(!s||!Number.isFinite(s.elapsed_seconds))return {seconds:null,estimated:false};
+  if(s.state!=='recording')return {seconds:s.elapsed_seconds,estimated:false};
+  if(this.held!==null)return {seconds:this.held,estimated:true};
+  const age=Math.max(0,d.age_seconds??0)+Math.max(0,(now-this.at)/1000);
+  return {seconds:s.elapsed_seconds+Math.min(age,d.fresh_seconds??15),estimated:true};
+ }
+ update(d,now=performance.now()){
+  const previous=this.sample?.status.name===d.status.name?this.reading(now).seconds:null;
+  this.sample=d;this.at=now;
+  const advance=d.status.state==='recording'&&d.radio_connected&&d.synchronized!==false&&d.pending!=='stop';
+  this.held=advance||d.status.state!=='recording'?null:(previous??d.status.elapsed_seconds??null);
+ }
+ pause(now=performance.now()){this.held=this.reading(now).seconds}
+}
+const recordingTimer=new RecordingTimer();
+function updateTimer(){const value=recordingTimer.reading();$('elapsed').textContent=time(value.seconds);$('elapsed-label').textContent=value.estimated?'Recorded time (estimated)':'Recorded time'}
 function selectedMode(){return document.querySelector('input[name="mode"]:checked').value==='selected'}
 function updateControls(d){
  const selected=selectedMode();$('topic-picker').hidden=!selected;
@@ -75,6 +95,7 @@ function renderTopics(d){
  $('refresh-topics').textContent=d.topics_loading?'Loading…':'Refresh topics';
 }
 function render(d){
+ recordingTimer.update(d);if(stopRequestActive)recordingTimer.pause();updateTimer();
  lastStatus=d;
  const s=d.status, live=d.radio_connected;
  $('link').textContent=live?'Radio connected':d.age_seconds==null?'Waiting for radio':'Radio contact lost';
@@ -82,7 +103,7 @@ function render(d){
  $('age').textContent=d.age_seconds==null?'No update yet':`Last update ${Math.floor(d.age_seconds)} s ago`;
  $('state').textContent=(names[s.state]||'Unknown state')+(!live&&d.age_seconds!=null?' · outdated':'');
  $('name').textContent=s.name||'Choose topics, then start recording';
- $('elapsed').textContent=time(s.elapsed_seconds);$('bag').textContent=bytes(s.bag_bytes);$('free').textContent=bytes(s.free_bytes);
+ $('bag').textContent=bytes(s.bag_bytes);$('free').textContent=bytes(s.free_bytes);
  $('temp').textContent=s.temperature_c==null?'—':s.temperature_c.toFixed(1)+' °C';$('topics').textContent=s.topic_count??'—';
  renderTopics(d);updateControls(d);
  $('start').textContent=d.pending==='start'?'Starting…':'Start recording';$('stop').textContent=d.pending==='stop'?'Stopping…':'Stop recording';
@@ -92,8 +113,8 @@ function render(d){
  const warnings=[];if(s.storage_warning)warnings.push('Pi storage is low');if(s.last_recording_error)warnings.push('Previous recording reported an error; inspect it on the Pi');else if(s.last_recording_warning)warnings.push('Previous recording reported a warning; inspect it on the Pi');
  $('warning').hidden=!warnings.length;$('warning').textContent=warnings.join(' · ');
 }
-async function refresh(){try{const r=await fetch('/api/status',{signal:AbortSignal.timeout(3000)});if(!r.ok)throw Error('Status unavailable');render(await r.json());$('browser-error').textContent=''}catch(e){$('start').disabled=true;$('stop').disabled=true;$('link').textContent='Local controller unavailable';$('link').className='badge bad';$('state').textContent='Status outdated';$('age').textContent='Updates unavailable';$('browser-error').textContent='Cannot reach this laptop’s LoRa controller. Keep its terminal running.'}finally{setTimeout(refresh,1000)}}
-async function command(action){sending=true;$('start').disabled=true;$('stop').disabled=true;$('notice').textContent=`Sending ${action}…`;const body=action==='start'?{mode:selectedMode()?'selected':'all',indices:topicNames.map((name,index)=>chosen.has(name)?index:-1).filter(index=>index>=0),revision:topicRevision}:{};try{const r=await fetch('/api/'+action,{method:'POST',headers:{'X-LoRa-Control':'__CONTROL_TOKEN__','Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(3000)});const d=await r.json();if(!r.ok)throw Error(d.error||'Command rejected');$('notice').textContent=action==='topics'?'Requesting topic list…':`Sending ${action} · waiting for Pi acknowledgment…`}catch(e){$('notice').textContent=e.message+'; check updated status before retrying'}finally{sending=false}}
-$('start').onclick=()=>command('start');$('stop').onclick=()=>command('stop');$('refresh-topics').onclick=()=>command('topics');document.querySelectorAll('input[name="mode"]').forEach(input=>input.onchange=()=>{if(lastStatus)updateControls(lastStatus)});refresh();
+async function refresh(){try{const r=await fetch('/api/status',{signal:AbortSignal.timeout(3000)});if(!r.ok)throw Error('Status unavailable');render(await r.json());$('browser-error').textContent=''}catch(e){recordingTimer.pause();updateTimer();$('start').disabled=true;$('stop').disabled=true;$('link').textContent='Local controller unavailable';$('link').className='badge bad';$('state').textContent='Status outdated';$('age').textContent='Updates unavailable';$('browser-error').textContent='Cannot reach this laptop’s LoRa controller. Keep its terminal running.'}finally{setTimeout(refresh,1000)}}
+async function command(action){sending=true;if(action==='stop'){stopRequestActive=true;recordingTimer.pause();updateTimer()}$('start').disabled=true;$('stop').disabled=true;$('notice').textContent=`Sending ${action}…`;const body=action==='start'?{mode:selectedMode()?'selected':'all',indices:topicNames.map((name,index)=>chosen.has(name)?index:-1).filter(index=>index>=0),revision:topicRevision}:{};try{const r=await fetch('/api/'+action,{method:'POST',headers:{'X-LoRa-Control':'__CONTROL_TOKEN__','Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(3000)});const d=await r.json();if(!r.ok)throw Error(d.error||'Command rejected');$('notice').textContent=action==='topics'?'Requesting topic list…':`Sending ${action} · waiting for Pi acknowledgment…`}catch(e){$('notice').textContent=e.message+'; check updated status before retrying'}finally{sending=false;if(action==='stop')stopRequestActive=false}}
+$('start').onclick=()=>command('start');$('stop').onclick=()=>command('stop');$('refresh-topics').onclick=()=>command('topics');document.querySelectorAll('input[name="mode"]').forEach(input=>input.onchange=()=>{if(lastStatus)updateControls(lastStatus)});setInterval(updateTimer,100);refresh();
 </script>
 </html>
