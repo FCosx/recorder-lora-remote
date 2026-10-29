@@ -17,7 +17,7 @@ from urllib.request import ProxyHandler, Request as HTTPRequest, build_opener
 from .common import SerialLink
 from .protocol import (
     CATALOG_REQUEST, CATALOG_RESPONSE, COMMAND_LIFETIME, MAX_PAYLOAD, RESPONSE,
-    RECORDING_NAME, SYNC_RESPONSE, UNKNOWN32, UNKNOWN64, ZERO, Op, Request, Response, Result, State, recording_token,
+    RECORDING_NAME, SPLIT_LIMITS, SYNC_RESPONSE, UNKNOWN32, UNKNOWN64, ZERO, Op, Request, Response, Result, State, recording_token, split_limits,
 )
 
 
@@ -62,8 +62,12 @@ class RecorderAPI:
     def topics(self):
         return self.request("/api/topics", timeout=20)["topics"]
 
-    def start(self, topics):
-        return self.request("/api/start", {"topics": topics}, timeout=5)
+    def start(self, topics, size=0, duration=0):
+        size, duration = split_limits(size, duration)
+        body = {"topics": topics}
+        if size or duration:
+            body.update(max_bag_size_mib=size, max_bag_duration_seconds=duration)
+        return self.request("/api/start", body, timeout=5)
 
     def stop(self, name):
         return self.request("/api/stop", {"expected_name": name, "wait": False}, timeout=5)
@@ -216,6 +220,7 @@ class Agent:
             return Result.EXPIRED
         status = self.api.status()
         if request.op in (Op.START, Op.START_SELECTED):
+            size, duration = 0, 0
             if status["state"] == "stopping":
                 return Result.BUSY
             if status["state"] != "idle":
@@ -225,11 +230,18 @@ class Agent:
             if request.recording != recording_token(status.get("name")):
                 return Result.CHANGED_RECORDING
             if request.op == Op.START_SELECTED:
-                if (len(request.data) != 21 or self.catalog is None
+                if len(request.data) not in (21, 21 + SPLIT_LIMITS.size):
+                    return Result.INVALID_SPLIT
+                if (self.catalog is None
                         or request.data[:8] != self.catalog["revision"]
                         or self.clock() - self.catalog["created"] > 3600):
                     return Result.CATALOG_CHANGED
-                mask = int.from_bytes(request.data[8:], "big")
+                if len(request.data) > 21:
+                    try:
+                        size, duration = split_limits(*SPLIT_LIMITS.unpack(request.data[21:]))
+                    except ValueError:
+                        return Result.INVALID_SPLIT
+                mask = int.from_bytes(request.data[8:21], "big")
                 if mask == 0 or mask >> len(self.catalog["topics"]):
                     return Result.INVALID_TOPICS
                 topics = [name for index, name in enumerate(self.catalog["topics"]) if mask & (1 << index)]
@@ -242,7 +254,10 @@ class Agent:
             # Topic discovery can take seconds; never execute a now-expired Start.
             if not self.fresh(request):
                 return Result.EXPIRED
-            self.api.start(topics)
+            if size or duration:
+                self.api.start(topics, size, duration)
+            else:
+                self.api.start(topics)
         elif request.op == Op.STOP:
             if status["state"] == "idle":
                 return Result.ALREADY_IDLE
@@ -275,7 +290,7 @@ class Agent:
         except Exception:
             status = {}
             state = State.UNAVAILABLE
-        flags = 16 | int(bool(status.get("storage_warning"))) | (int(bool(status.get("can_start"))) << 1)
+        flags = 16 | 32 | int(bool(status.get("storage_warning"))) | (int(bool(status.get("can_start"))) << 1)
         health = status.get("last_result") or {}
         flags |= int(health.get("state") == "warning") << 2
         flags |= int(health.get("state") == "error") << 3

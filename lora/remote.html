@@ -91,20 +91,29 @@
 #notice{min-height:1.5em;margin-bottom:0}.warning{color:#744600}#warning,#browser-error{margin-bottom:0}
 .topic-list{max-height:300px;overflow:auto}.topic-list label{display:flex;gap:9px;padding:9px 4px;border-bottom:1px solid #edf0f2;overflow-wrap:anywhere}.topic-list input{flex-shrink:0;margin-top:4px}
 .recording-meta{display:flex;gap:6px 14px;flex-wrap:wrap;font-size:.85rem;margin:6px 0 10px;color:#596775}.recording-actions{display:flex;gap:10px}.recording-actions button{padding:8px 12px}
-#recordings-progress,#topic-progress,#age,#telemetry{font-size:.875rem}#recordings-progress{min-height:1.3em}.pager{display:flex;gap:10px;align-items:center;margin-top:14px}.pager[hidden]{display:none}summary{cursor:pointer}.card h2{margin-bottom:0}.card>h2{margin-bottom:12px}.bag-topic-panel p{margin:0 0 10px}.recording-title{margin:0}.bag-topic-table{font-size:.9rem}footer{font-size:.8rem;color:#596775;margin:18px 0}footer p{margin:6px 0}
+#recordings-progress,#topic-progress,#age,#cpu-temp{font-size:.875rem}#recordings-progress{min-height:1.3em}.pager{display:flex;gap:10px;align-items:center;margin-top:14px}.pager[hidden]{display:none}summary{cursor:pointer}.card h2{margin-bottom:0}.card>h2{margin-bottom:12px}.bag-topic-panel p{margin:0 0 10px}.recording-title{margin:0}.bag-topic-table{font-size:.9rem}footer{font-size:.8rem;color:#596775;margin:18px 0}footer p{margin:6px 0}
+.status-updates{display:flex;flex-direction:column;align-items:flex-end;gap:3px;text-align:right}.status-updates #cpu-temp{font-weight:650;color:#435364}
 </style></head><body>
 <h1>Robot Recorder <span class="badge">LoRa remote</span></h1>
 <p class="muted">Choose ROS 2 topics and save recordings on the Raspberry Pi.</p>
 <section class="card">
- <div class="row" style="justify-content:space-between"><h2>Status</h2><div class="row"><span id="link" class="badge">Waiting for radio</span><span id="age" class="muted">No update yet</span></div></div>
+ <div class="row" style="justify-content:space-between"><h2>Status</h2><div class="row"><span id="link" class="badge">Waiting for radio</span><div class="status-updates"><span id="cpu-temp">CPU temperature: —</span><span id="age" class="muted">No update yet</span></div></div></div>
  <div id="status" class="recorder-status"><strong id="state">Connecting to recorder…</strong><span id="name">Waiting for Pi status.</span></div>
  <div class="storage-metrics">
   <div class="storage-metric"><span class="storage-label">Pi free space</span><strong id="free" class="storage-value">—</strong><span id="total" class="storage-detail">Storage unavailable</span></div>
   <div class="storage-metric is-bag"><span class="storage-label">Current bag size</span><strong id="bag" class="storage-value">—</strong><span id="topics" class="storage-detail">No active recording</span></div>
  </div>
  <div id="timer" class="recording-timer" hidden><span id="elapsed-label" class="timer-heading">Recorded time</span><strong id="elapsed" class="timer-value">—</strong></div>
+ <fieldset id="split-options" class="split-options" disabled>
+  <legend>Split MCAP files (optional)</legend>
+  <div class="row">
+   <label for="split-size">File size <input id="split-size" type="number" min="1" max="1048576" step="1" placeholder="Off"> MiB</label>
+   <label for="split-duration">File duration <input id="split-duration" type="number" min="1" max="604800" step="1" placeholder="Off"> seconds</label>
+  </div>
+  <p class="muted">Leave blank for one file. If both limits are set, the first reached starts a new file.</p>
+ </fieldset>
  <div class="row"><button id="start" disabled>Begin recording</button><button id="stop" class="stop" disabled>Stop recording</button></div>
- <p id="notice" role="status" aria-live="polite">Connecting…</p><p id="warning" class="warning" hidden></p><p id="telemetry" class="muted">CPU temperature: —</p>
+ <p id="notice" role="status" aria-live="polite">Connecting…</p><p id="warning" class="warning" hidden></p>
 </section>
 <section class="card">
  <div class="row" style="justify-content:space-between"><h2>Available topics</h2><button id="refresh-topics" class="secondary" disabled>Refresh topics</button></div>
@@ -153,6 +162,7 @@ function updateControls(d){
  $('selection-count').textContent=`${chosen.size} selected`;
  $('start').disabled=sending||!d.can_start||d.topics_loading||chosen.size===0||topicRevision==='0000000000000000';
  $('stop').disabled=sending||!d.can_stop;
+ $('split-options').disabled=sending||!d.can_start||!d.splitting_supported;
  $('refresh-topics').disabled=!metadataReady(d);
  const ready=metadataReady(d)&&d.recording_management;
  $('refresh-recordings').disabled=!ready;
@@ -215,7 +225,7 @@ function render(d){
  $('bag').textContent=bytes(s.bag_bytes);$('free').textContent=bytes(s.free_bytes);$('total').textContent=s.total_bytes==null?'Storage unavailable':`of ${bytes(s.total_bytes)} total`;
  $('topics').textContent=s.name?`${s.topic_count??'—'} topics in current recording`:'No active recording';
  $('timer').hidden=!['starting','recording','stopping'].includes(s.state);$('timer').classList.toggle('is-stopping',s.state==='stopping');
- $('telemetry').textContent=`CPU temperature: ${s.temperature_c==null?'—':s.temperature_c.toFixed(1)+' °C'}`;
+ $('cpu-temp').textContent=`CPU temperature: ${s.temperature_c==null?'—':s.temperature_c.toFixed(1)+' °C'}`;
  renderTopics(d);renderRecordings(d);updateControls(d);
  $('start').textContent=d.pending==='start'?'Starting…':'Begin recording';$('stop').textContent=d.pending==='stop'?'Stopping…':'Stop recording';
  const actionName=action=>action==='start'?'Start':action==='stop'?'Stop':'Delete';
@@ -225,8 +235,9 @@ function render(d){
 }
 async function refresh(){try{const r=await fetch('/api/status',{signal:AbortSignal.timeout(3000)});if(!r.ok)throw Error('Status unavailable');render(await r.json());$('browser-error').textContent=''}catch(e){recordingTimer.pause();updateTimer();document.querySelectorAll('button').forEach(button=>button.disabled=true);$('link').textContent='Local controller unavailable';$('link').className='badge bad';$('state').textContent='Status outdated';$('age').textContent='Updates unavailable';$('browser-error').textContent='Cannot reach this laptop’s LoRa controller. Keep its terminal running.'}finally{setTimeout(refresh,1000)}}
 async function command(action,extra={}){
+ if(action==='start'&&![$('split-size'),$('split-duration')].every(input=>input.reportValidity()))return;
  sending=true;if(action==='stop'){stopRequestActive=true;recordingTimer.pause();updateTimer()}if(lastStatus)updateControls(lastStatus);
- const body=action==='start'?{mode:'selected',indices:topicNames.map((name,index)=>chosen.has(name)?index:-1).filter(index=>index>=0),revision:topicRevision}:extra;
+ const body=action==='start'?{mode:'selected',indices:topicNames.map((name,index)=>chosen.has(name)?index:-1).filter(index=>index>=0),revision:topicRevision,max_bag_size_mib:$('split-size').value===''?null:$('split-size').valueAsNumber,max_bag_duration_seconds:$('split-duration').value===''?null:$('split-duration').valueAsNumber}:extra;
  $('notice').textContent=`Sending ${action}…`;
  try{const r=await fetch('/api/'+action,{method:'POST',headers:{'X-LoRa-Control':'__CONTROL_TOKEN__','Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(3000)});const d=await r.json();if(!r.ok)throw Error(d.error||'Request rejected');$('notice').textContent=['start','stop','delete'].includes(action)?`Sending ${action} · waiting for Pi acknowledgment…`:'Loading over LoRa…'}catch(e){$('notice').textContent=e.message+'; check updated status before retrying'}finally{sending=false;if(action==='stop')stopRequestActive=false}
 }

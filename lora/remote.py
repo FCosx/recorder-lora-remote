@@ -14,7 +14,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from .common import SerialLink
-from .protocol import CATALOG_REQUEST, CATALOG_RESPONSE, JSONTransfer, RECORDING_NAME, SYNC_RESPONSE, ZERO, Op, Request, Response, Result, RESULT_TEXT, State, recording_token
+from .protocol import CATALOG_REQUEST, CATALOG_RESPONSE, JSONTransfer, RECORDING_NAME, SPLIT_LIMITS, SYNC_RESPONSE, ZERO, Op, Request, Response, Result, RESULT_TEXT, State, recording_token, split_limits
 
 
 LOG = logging.getLogger(__name__)
@@ -94,6 +94,7 @@ class Remote:
                 "topics_total_bytes": self.topic_transfer["total"] if self.topic_transfer else None,
                 "topics_error": self.topic_error,
                 "recording_management": bool(self.latest and self.latest.flags & 16),
+                "splitting_supported": bool(self.latest and self.latest.flags & 32),
                 "recordings": self.recordings, "recordings_revision": self.recordings_revision.hex(),
                 "recordings_total": self.recordings_total, "recordings_next": self.recordings_next,
                 "recordings_offset": self.recordings_offset,
@@ -109,7 +110,7 @@ class Remote:
                             and data["state"] in ("starting", "recording"),
             }
 
-    def submit(self, op, selected=None, revision=None):
+    def submit(self, op, selected=None, revision=None, size=None, duration=None):
         with self.lock:
             status = self.status()
             if not status["can_start" if op in (Op.START, Op.START_SELECTED) else "can_stop"]:
@@ -123,6 +124,11 @@ class Remote:
                     raise ValueError("Refresh topics and select at least one topic before starting")
                 mask = sum(1 << index for index in set(selected))
                 data = self.catalog_revision + mask.to_bytes(13, "big")
+                size, duration = split_limits(size, duration)
+                if size or duration:
+                    if not status["splitting_supported"]:
+                        raise ValueError("Update the Pi LoRa agent before using file splitting")
+                    data += SPLIT_LIMITS.pack(size, duration)
             self.pending = "start" if op in (Op.START, Op.START_SELECTED) else "stop"
             self.queue.put_nowait((op, self.latest, data))
 
@@ -440,7 +446,8 @@ def make_handler(remote, port):
                 elif self.path == "/api/start":
                     if body.get("mode", "selected") != "selected":
                         raise ValueError("Select the topics to record")
-                    remote.submit(Op.START_SELECTED, body.get("indices"), body.get("revision"))
+                    remote.submit(Op.START_SELECTED, body.get("indices"), body.get("revision"),
+                                  body.get("max_bag_size_mib"), body.get("max_bag_duration_seconds"))
                 else:
                     remote.submit(Op.STOP)
                 self.reply(202, {"queued": True})

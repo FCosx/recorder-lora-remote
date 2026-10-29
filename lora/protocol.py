@@ -29,6 +29,9 @@ MAX_PAYLOAD = ((MAX_FRAME - len(PREFIX) - 1) // 4) * 3 - TAG_BYTES
 CATALOG_REQUEST = struct.Struct("!8sH")
 CATALOG_RESPONSE = struct.Struct("!8sHH")
 SYNC_RESPONSE = struct.Struct("!16sQ")
+SPLIT_LIMITS = struct.Struct("!II")
+MAX_SPLIT_SIZE_MIB = 1024 * 1024
+MAX_SPLIT_DURATION_SECONDS = 7 * 24 * 60 * 60
 RECORDING_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}\Z")
 
 
@@ -72,6 +75,7 @@ class Result(IntEnum):
     INVALID_RECORDING = 16
     NOT_FOUND = 17
     TOO_LARGE = 18
+    INVALID_SPLIT = 19
 
 
 RESULT_TEXT = {
@@ -94,7 +98,19 @@ RESULT_TEXT = {
     Result.INVALID_RECORDING: "Recording selection is invalid or outdated; refresh recordings",
     Result.NOT_FOUND: "Recording is no longer available; refresh recordings",
     Result.TOO_LARGE: "Recording details are too large for the radio link",
+    Result.INVALID_SPLIT: "Invalid split limits; use whole MiB/seconds or leave blank",
 }
+
+
+def split_limits(size=None, duration=None):
+    values = []
+    for value, maximum, label in ((size, MAX_SPLIT_SIZE_MIB, "File size (MiB)"),
+                                   (duration, MAX_SPLIT_DURATION_SECONDS, "File duration (seconds)")):
+        value = 0 if value is None else value
+        if type(value) is not int or not 0 <= value <= maximum:
+            raise ValueError(f"{label} must be a whole number from 1 to {maximum}, or blank/0 for Off")
+        values.append(value)
+    return tuple(values)
 
 
 class JSONTransfer:
