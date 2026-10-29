@@ -42,6 +42,10 @@ def main():
     export.add_argument("--output", type=Path, default=ROOT / "dist/recorder-lora-remote.pyz")
     public = commands.add_parser("build-public", help="Build an installer without pairing keys for public distribution")
     public.add_argument("--output", type=Path, default=ROOT / "dist/recorder-lora-remote-public.pyz")
+    public.add_argument("--encrypted-pairing", type=Path, help="Include passcode-protected recorder authorization")
+    encrypt = commands.add_parser("encrypt-pairing", help="Maintainer: protect a pairing file for public distribution")
+    encrypt.add_argument("--config", type=Path, default=Path.home() / ".config/robot-recorder-lora/remote.json")
+    encrypt.add_argument("--output", type=Path, required=True)
     for role in ("agent", "remote"):
         command = commands.add_parser(role)
         command.add_argument("--config", type=Path,
@@ -68,14 +72,29 @@ def main():
 
     signal.signal(signal.SIGTERM, interrupt)
     try:
+        if args.command == "encrypt-pairing":
+            import getpass
+            from tools.lora_offline_bootstrap import atomic_write, encrypt_pairing
+            _, key, _ = load_config(args.config, "remote")
+            passcode = getpass.getpass("New pairing passcode: ")
+            if passcode != getpass.getpass("Confirm pairing passcode: "):
+                raise ValueError("Passcodes do not match")
+            config = {"version": 1, "role": "remote", "key": key.hex(), "state_file": "remote-state.sqlite3"}
+            output = args.output.expanduser().resolve()
+            if output == args.config.expanduser().resolve() or output.exists():
+                raise ValueError("Choose a new output path; existing files are never overwritten")
+            atomic_write(output, encrypt_pairing(config, passcode), 0o644)
+            print(f"Encrypted pairing created: {output}. Share the passcode separately.")
+            return
         if args.command in ("export-remote", "build-public"):
             from lora.bundle import build_bundle
-            destination = build_bundle(ROOT, args.config if args.command == "export-remote" else None, args.output)
+            destination = build_bundle(ROOT, args.config if args.command == "export-remote" else None, args.output,
+                                       args.encrypted_pairing if args.command == "build-public" else None)
             if args.command == "export-remote":
                 print(f"Private offline installer created: {destination}")
                 print("Supply this file with the remote radio. It contains a pairing secret; do not publish it.")
             else:
-                print(f"Public installer created without pairing credentials: {destination}")
+                print(f"Public installer created without plaintext pairing credentials: {destination}")
             return
         if args.command == "pair-status":
             print(json.dumps(pairing_status(args.config)))

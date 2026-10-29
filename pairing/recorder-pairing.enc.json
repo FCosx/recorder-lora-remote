@@ -1,0 +1,9 @@
+{
+  "format": "recorder-pairing-encrypted-v1",
+  "cipher": "AES-256-CBC+HMAC-SHA256",
+  "iterations": 600000,
+  "key_id": "122ba46d9ef845d287910af6e0f81fc89bef4696dc6eab1296026c2155de812b",
+  "salt": "3FQ7O8V/3JehpLGoZz4xDpCjvINjKzd5l3RN5iN+z9o=",
+  "ciphertext": "U2FsdGVkX19JNOAADPs4/FdozK5I6uddMnSi79+/rCkSXGfm0c3STb1CHO7tijKsyuDv18zIeyndUrZnWKTJGO+l8Yj6i3zKdpf19vYrR3QeGhv4kieE74kdrQKpny+/wGa8vIQVMjJSOBWhq+0t+ks6TjZi78PjVcAMAj13joTiPpK50gL3my+ZWFMVPfp+EjkVBs6oD0qlumkfQKcRTR3VdrK9CJAzZ5b1Comm48M=",
+  "mac": "01a5fcce0c4776a1df959535f2acf5914fed485a907e8c0b891d37c9b2c56bd3"
+}

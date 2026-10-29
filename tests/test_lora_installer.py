@@ -1,6 +1,7 @@
 """Install the paired zipapp with no network tools or system serial package."""
 
 import json
+import base64
 import os
 import subprocess
 import sys
@@ -12,6 +13,7 @@ from pathlib import Path
 from lora.bundle import build_bundle
 from lora.common import load_config, write_private
 from lora.remote import Counter
+from tools.lora_offline_bootstrap import decrypt_pairing, encrypt_pairing
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -32,13 +34,84 @@ class InstallerTests(unittest.TestCase):
         self.empty_bin.mkdir()
         self.environment = dict(os.environ, PATH=str(self.empty_bin), PYTHONDONTWRITEBYTECODE='1')
 
-    def install(self, bundle=None, pairing=None):
+    def install(self, bundle=None, pairing=None, passcode=None):
         command = [sys.executable, '-S', str(bundle or self.bundle), 'install',
                    '--directory', str(self.target), '--config-dir', str(self.config)]
         if pairing is not None:
             command += ['--pairing', str(pairing)]
-        return subprocess.run(command,
-                              env=self.environment, capture_output=True, text=True, timeout=20)
+        environment = dict(self.environment)
+        if passcode is not None:
+            environment['PATH'] = os.defpath
+        return subprocess.run(command, input=None if passcode is None else passcode + '\n',
+                              env=environment, capture_output=True, text=True, timeout=20)
+
+    def encrypted_bundle(self):
+        encrypted = self.root / 'pairing.enc.json'
+        encrypted.write_bytes(encrypt_pairing(json.loads(self.source.read_text()), 'test-only-passphrase'))
+        return encrypted, build_bundle(ROOT, None, self.root / 'encrypted.pyz', encrypted)
+
+    def test_encrypted_first_install_then_update_without_passcode_or_openssl(self):
+        encrypted, bundle = self.encrypted_bundle()
+        self.assertNotIn(self.key.encode(), encrypted.read_bytes())
+        self.assertNotIn(b'test-only-passphrase', encrypted.read_bytes())
+        with zipfile.ZipFile(bundle) as archive:
+            self.assertIn('pairing/remote.enc.json', archive.namelist())
+            self.assertNotIn('pairing/remote.json', archive.namelist())
+            for name in archive.namelist():
+                self.assertNotIn(self.key.encode(), archive.read(name), name)
+        result = self.install(bundle, passcode='test-only-passphrase')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn('test-only-passphrase', result.stdout + result.stderr)
+        _, key, state = load_config(self.config / 'remote.json', 'remote')
+        self.assertEqual(key.hex(), self.key)
+        counter = Counter(state)
+        counter.ensure_at_least(500)
+        counter.close()
+        self.assertEqual((self.config / 'remote.json').stat().st_mode & 0o777, 0o600)
+        result = self.install(bundle)  # Empty PATH, no passcode, no OpenSSL needed again.
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn('passcode:', result.stderr)
+        counter = Counter(state)
+        self.assertEqual(counter.next(), 501)
+        counter.close()
+
+    def test_wrong_passcode_and_tampered_envelope_are_rejected(self):
+        encrypted, bundle = self.encrypted_bundle()
+        result = self.install(bundle, passcode='incorrect-test-passphrase')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Incorrect passcode or damaged', result.stderr)
+        self.assertFalse(self.target.exists())
+        self.assertFalse(self.config.exists())
+        original = json.loads(encrypted.read_bytes())
+        for field in ('key_id', 'salt', 'ciphertext', 'mac'):
+            changed = dict(original)
+            if field in ('salt', 'ciphertext'):
+                value = bytearray(base64.b64decode(changed[field]))
+                value[-1] ^= 1
+                changed[field] = base64.b64encode(value).decode()
+            else:
+                changed[field] = ('1' if changed[field][0] != '1' else '2') + changed[field][1:]
+            with self.assertRaisesRegex(ValueError, 'Incorrect passcode or damaged'):
+                decrypt_pairing(changed, 'test-only-passphrase')
+
+    def test_encrypted_install_does_not_replace_other_pairing(self):
+        _, bundle = self.encrypted_bundle()
+        self.config.mkdir()
+        previous = {'version': 1, 'role': 'remote', 'key': bytes(32).hex(),
+                    'state_file': 'remote-state.sqlite3'}
+        write_private(self.config / 'remote.json', previous)
+        result = self.install(bundle)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('different recorder', result.stderr)
+        self.assertFalse(self.target.exists())
+        self.assertEqual(json.loads((self.config / 'remote.json').read_text()), previous)
+
+    def test_separate_encrypted_pairing_can_be_imported(self):
+        encrypted, _ = self.encrypted_bundle()
+        public = build_bundle(ROOT, None, self.root / 'public.pyz')
+        result = self.install(public, encrypted, passcode='test-only-passphrase')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(load_config(self.config / 'remote.json', 'remote')[1].hex(), self.key)
 
     def test_offline_install_includes_serial_and_reinstall_preserves_pairing_and_counter(self):
         result = self.install()
