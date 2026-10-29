@@ -1,0 +1,338 @@
+"""Remote laptop: one serial worker and a browser UI bound to localhost only."""
+
+import json
+import logging
+import queue
+import secrets
+import sqlite3
+import threading
+import time
+import zlib
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import urlsplit
+
+from .common import SerialLink
+from .protocol import CATALOG_REQUEST, CATALOG_RESPONSE, SYNC_RESPONSE, ZERO, Op, Request, Response, Result, RESULT_TEXT, State
+
+
+LOG = logging.getLogger(__name__)
+FRESH_SECONDS = 15
+
+
+class Counter:
+    def __init__(self, path):
+        self.db = sqlite3.connect(path)
+        self.db.execute("CREATE TABLE IF NOT EXISTS counter (id INTEGER PRIMARY KEY CHECK (id=1), value INTEGER)")
+        self.db.execute("INSERT OR IGNORE INTO counter VALUES (1, 0)")
+        self.db.commit()
+
+    def next(self):
+        with self.db:
+            self.db.execute("UPDATE counter SET value=value+1 WHERE id=1")
+            return self.db.execute("SELECT value FROM counter WHERE id=1").fetchone()[0]
+
+    def ensure_at_least(self, value):
+        if type(value) is not int or not 0 <= value < 2**63 - 1:
+            raise ValueError("Invalid Pi command high-water mark")
+        with self.db:
+            self.db.execute("UPDATE counter SET value=MAX(value, ?) WHERE id=1", (value,))
+
+    def close(self):
+        self.db.close()
+
+
+class Remote:
+    def __init__(self, key, state_file, port, poll_seconds=5, timeout=8, attempts=3):
+        self.key = key
+        self.state_file = state_file
+        self.link = SerialLink(port)
+        self.poll_seconds = poll_seconds
+        self.timeout = timeout
+        self.attempts = attempts
+        self.lock = threading.RLock()
+        self.queue = queue.Queue(maxsize=1)
+        self.stopped = threading.Event()
+        self.latest = None
+        self.received_at = None
+        self.pending = None
+        self.command = None
+        self.error = None
+        self.needs_refresh = True
+        self.synchronized = False
+        self.worker = None
+        self.catalog = []
+        self.catalog_revision = ZERO
+        self.topic_transfer = None
+        self.topic_error = None
+
+    def status(self):
+        with self.lock:
+            age = None if self.received_at is None else max(0, time.monotonic() - self.received_at)
+            online = age is not None and age <= FRESH_SECONDS
+            data = self.latest.as_dict() if self.latest else {"state": "unknown"}
+            return {
+                "radio_connected": online, "age_seconds": age,
+                "synchronized": self.synchronized,
+                "status": data, "pending": self.pending, "last_command": self.command,
+                "error": self.error, "poll_seconds": self.poll_seconds,
+                "topics": self.catalog, "topics_revision": self.catalog_revision.hex(),
+                "topics_loading": self.topic_transfer is not None,
+                "topics_received_bytes": len(self.topic_transfer["data"]) if self.topic_transfer else 0,
+                "topics_total_bytes": self.topic_transfer["total"] if self.topic_transfer else None,
+                "topics_error": self.topic_error,
+                "can_start": online and self.synchronized and not self.needs_refresh and not self.pending
+                             and data["state"] == "idle" and data.get("can_start", False),
+                "can_stop": online and self.synchronized and not self.needs_refresh and not self.pending
+                            and data["state"] in ("starting", "recording"),
+            }
+
+    def submit(self, op, selected=None, revision=None):
+        with self.lock:
+            status = self.status()
+            if not status["can_start" if op in (Op.START, Op.START_SELECTED) else "can_stop"]:
+                raise ValueError("Wait for fresh status and any pending command before acting")
+            data = b""
+            if op == Op.START_SELECTED:
+                if (self.catalog_revision == ZERO or revision != self.catalog_revision.hex()
+                        or self.topic_transfer is not None
+                        or not isinstance(selected, list) or not selected
+                        or any(type(index) is not int or not 0 <= index < len(self.catalog) for index in selected)):
+                    raise ValueError("Refresh topics and select at least one topic before starting")
+                mask = sum(1 << index for index in set(selected))
+                data = self.catalog_revision + mask.to_bytes(13, "big")
+            self.pending = "start" if op in (Op.START, Op.START_SELECTED) else "stop"
+            self.queue.put_nowait((op, self.latest, data))
+
+    def refresh_topics(self):
+        with self.lock:
+            if not self.status()["radio_connected"] or not self.synchronized or self.pending:
+                raise ValueError("Wait for radio status and any pending recording command")
+            if self.topic_transfer is not None:
+                raise ValueError("A topic refresh is already running")
+            self.catalog = []
+            self.catalog_revision = ZERO
+            self.topic_error = None
+            self.topic_transfer = {"revision": ZERO, "data": bytearray(), "total": None}
+
+    def accept_topics(self, response):
+        transfer = self.topic_transfer
+        if transfer is None:
+            return
+        try:
+            if response.result != Result.OK:
+                raise ValueError(RESULT_TEXT[response.result])
+            if len(response.data) <= CATALOG_RESPONSE.size:
+                raise ValueError("Incomplete topic-list reply")
+            revision, offset, total = CATALOG_RESPONSE.unpack(response.data[:CATALOG_RESPONSE.size])
+            if (not 0 < total <= 30000 or offset != len(transfer["data"])
+                    or transfer["revision"] not in (ZERO, revision)
+                    or transfer["total"] not in (None, total)):
+                raise ValueError("Topic-list chunks do not match; refresh again")
+            transfer["revision"], transfer["total"] = revision, total
+            transfer["data"].extend(response.data[CATALOG_RESPONSE.size:])
+            if len(transfer["data"]) > total:
+                raise ValueError("Oversized topic-list reply")
+            if len(transfer["data"]) == total:
+                inflater = zlib.decompressobj()
+                raw = inflater.decompress(transfer["data"], 30001)
+                if len(raw) > 30000 or not inflater.eof or inflater.unused_data:
+                    raise ValueError("Invalid compressed topic list")
+                topics = json.loads(raw)
+                if (not isinstance(topics, list) or len(topics) > 100
+                        or any(not isinstance(name, str) or len(name) > 255 or not name.startswith("/") for name in topics)):
+                    raise ValueError("Invalid topic list")
+                self.catalog, self.catalog_revision = topics, revision
+                self.topic_transfer = None
+        except (ValueError, zlib.error) as error:
+            self.topic_error = str(error)
+            self.topic_transfer = None
+
+    def exchange(self, request):
+        frame = request.encode(self.key)
+        for attempt in range(self.attempts):
+            if self.stopped.is_set():
+                return None
+            try:
+                self.link.send(frame)
+                deadline = time.monotonic() + self.timeout
+                while not self.stopped.is_set() and time.monotonic() < deadline:
+                    for received in self.link.read():
+                        try:
+                            response = Response.decode(received, self.key)
+                        except ValueError:
+                            continue
+                        if response.number == request.number and response.op == request.op:
+                            if request.op == Op.SYNC and (len(response.data) != SYNC_RESPONSE.size
+                                    or response.data[:16] != request.data):
+                                continue
+                            return response
+            except Exception as error:
+                LOG.warning("Serial attempt %s: %s", attempt + 1, error)
+                self.link.close()
+            self.stopped.wait(0.4)
+        return None
+
+    def _run(self):
+        counter = Counter(self.state_file)
+        next_poll = 0
+        try:
+            while not self.stopped.is_set():
+                if not self.synchronized:
+                    op, snapshot, data = Op.SYNC, None, secrets.token_bytes(16)
+                else:
+                    try:
+                        op, snapshot, data = self.queue.get(timeout=0.1)
+                    except queue.Empty:
+                        with self.lock:
+                            if time.monotonic() >= next_poll:
+                                op, snapshot, data = Op.STATUS, None, b""
+                            elif self.topic_transfer is not None:
+                                op, snapshot = Op.TOPICS, None
+                                transfer = self.topic_transfer
+                                data = CATALOG_REQUEST.pack(transfer["revision"], len(transfer["data"]))
+                            else:
+                                continue
+                request = Request(op, counter.next(), **({
+                    "tick": snapshot.tick, "boot": snapshot.boot, "recording": snapshot.recording,
+                } if snapshot is not None else {}), data=data)
+                response = self.exchange(request)
+                with self.lock:
+                    sync_error = None
+                    if response is not None and op == Op.SYNC:
+                        try:
+                            if response.result != Result.OK:
+                                raise ValueError("Pi rejected radio synchronization")
+                            nonce, highest = SYNC_RESPONSE.unpack(response.data)
+                            if nonce != data:
+                                raise ValueError("Radio synchronization challenge does not match")
+                            counter.ensure_at_least(highest)
+                            self.synchronized = True
+                        except Exception as error:
+                            sync_error = str(error)
+                            response = None
+                    if response is not None:
+                        if self.latest is not None and self.latest.boot != response.boot and op != Op.SYNC:
+                            self.synchronized = False
+                        self.latest = response
+                        self.received_at = time.monotonic()
+                        self.error = None
+                        self.needs_refresh = False
+                    else:
+                        self.synchronized = False
+                        self.needs_refresh = True
+                        self.error = sync_error or "No authenticated reply. Check radio power, settings, or range."
+                    if op == Op.TOPICS:
+                        if response is not None:
+                            self.accept_topics(response)
+                        else:
+                            self.topic_error = "No topic-list reply; refresh when the radio link is available"
+                            self.topic_transfer = None
+                    elif op not in (Op.STATUS, Op.SYNC):
+                        result = response.result if response else Result.UNKNOWN
+                        self.command = {"action": "start" if op in (Op.START, Op.START_SELECTED) else "stop", "result": result.name.lower(),
+                                        "message": RESULT_TEXT[result]}
+                        self.pending = None
+                        self.needs_refresh = response is None
+                        if result in (Result.OLD_COMMAND, Result.ID_CONFLICT):
+                            self.synchronized = False
+                            self.needs_refresh = True
+                        LOG.info("%s: %s", op.name, RESULT_TEXT[result])
+                # A status request confirms progress after Start/Stop; otherwise poll every 5s.
+                if op == Op.SYNC and response is None:
+                    self.stopped.wait(1)
+                if op != Op.TOPICS:
+                    next_poll = time.monotonic() + (0.5 if op != Op.STATUS else self.poll_seconds)
+                elif self.stopped.wait(0.3):
+                    break
+        finally:
+            self.link.close()
+            counter.close()
+
+    def start(self):
+        self.worker = threading.Thread(target=self._run, name="lora-serial", daemon=True)
+        self.worker.start()
+
+    def close(self):
+        self.stopped.set()
+        if self.worker:
+            self.worker.join(timeout=5)
+
+
+def make_handler(remote, port):
+    token = secrets.token_urlsafe(24)
+    html = (Path(__file__).parent / "remote.html").read_text().replace("__CONTROL_TOKEN__", token).encode()
+    hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def reply(self, code, data, content_type="application/json"):
+            payload = data if isinstance(data, bytes) else json.dumps(data).encode()
+            self.send_response(code)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(payload)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("X-Frame-Options", "DENY")
+            self.end_headers()
+            try:
+                self.wfile.write(payload)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+
+        def valid_host(self):
+            return self.headers.get("Host") in hosts
+
+        def do_GET(self):
+            if not self.valid_host():
+                return self.reply(403, {"error": "Open this page using localhost"})
+            path = urlsplit(self.path).path
+            if path == "/":
+                self.reply(200, html, "text/html; charset=utf-8")
+            elif path == "/api/status":
+                self.reply(200, remote.status())
+            else:
+                self.reply(404, {"error": "Unknown endpoint"})
+
+        def do_POST(self):
+            origin = self.headers.get("Origin")
+            if (not self.valid_host() or self.headers.get("X-LoRa-Control") != token
+                    or (origin is not None and origin != "http://" + self.headers.get("Host", ""))):
+                return self.reply(403, {"error": "Open the local control page before sending commands"})
+            if self.path not in ("/api/start", "/api/stop", "/api/topics"):
+                return self.reply(404, {"error": "Unknown endpoint"})
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                if not 0 <= length <= 2048:
+                    raise ValueError("Request too large")
+                body = json.loads(self.rfile.read(length) or b"{}")
+                if not isinstance(body, dict):
+                    raise ValueError("Expected an object")
+                if self.path == "/api/topics":
+                    remote.refresh_topics()
+                elif self.path == "/api/start" and body.get("mode") == "selected":
+                    remote.submit(Op.START_SELECTED, body.get("indices"), body.get("revision"))
+                else:
+                    if self.path == "/api/start" and body.get("mode", "all") != "all":
+                        raise ValueError("Choose all or selected topics")
+                    remote.submit(Op.START if self.path == "/api/start" else Op.STOP)
+                self.reply(202, {"queued": True})
+            except ValueError as error:
+                self.reply(409, {"error": str(error)})
+
+    return Handler
+
+
+def run_remote(config, key, state_file, port, web_port):
+    remote = Remote(key, state_file, port)
+    server = ThreadingHTTPServer(("127.0.0.1", web_port), make_handler(remote, web_port))
+    server.daemon_threads = True
+    remote.start()
+    print(f"LoRa remote: http://127.0.0.1:{web_port}", flush=True)
+    try:
+        server.serve_forever()
+    finally:
+        server.server_close()
+        remote.close()

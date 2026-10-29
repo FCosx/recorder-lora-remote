@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Recorder · LoRa Remote</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f3f6fa;color:#172c40;font:16px system-ui,sans-serif}
+main{max-width:860px;margin:40px auto;padding:0 20px}header p,.muted{color:#5e7083}h1{font-size:1.8rem;margin-bottom:6px}
+.panel{background:#fff;border:1px solid #d9e3ed;border-radius:14px;padding:20px;margin:18px 0}
+.row{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.badge{border-radius:30px;padding:7px 12px;font-weight:650;background:#e9eef3;color:#526477}
+.badge.good{background:#e2f3ea;color:#14633c}.badge.bad{background:#fff0d9;color:#7b4c00}
+#state{font-size:1.65rem;margin:14px 0 4px}.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.metric{background:#f4f7fb;border-radius:10px;padding:14px}.metric span{display:block;color:#5e7083;font-size:.85rem}
+.metric strong{display:block;margin-top:5px;font-size:1.3rem;font-variant-numeric:tabular-nums}
+button{font:inherit;font-weight:650;border:0;border-radius:9px;padding:12px 22px;cursor:pointer;background:#195b91;color:white}
+button.stop{background:#b52c31}button:disabled{opacity:.4;cursor:default}.actions{display:flex;gap:12px;margin:18px 0 12px}
+#notice{min-height:1.5em}#notice.warn,#warning{color:#945300}#name{overflow-wrap:anywhere}
+footer{font-size:.85rem;color:#65778a;line-height:1.5}#browser-error{color:#a3252e}
+.modes{display:flex;gap:20px;flex-wrap:wrap;margin:14px 0}.topic-list{max-height:280px;overflow:auto;margin:12px 0}
+.topic-list label{display:flex;gap:10px;align-items:flex-start;padding:9px 0;border-bottom:1px solid #edf1f5;overflow-wrap:anywhere}
+.topic-list input{margin-top:4px;flex-shrink:0}.topic-list span{min-width:0}#topic-progress{font-size:.9rem;color:#5e7083}
+.small{font-size:.85rem;padding:8px 12px}details{margin-top:12px}summary{cursor:pointer}
+@media(max-width:600px){main{margin-top:22px}.metrics{grid-template-columns:repeat(2,1fr)}.panel{padding:16px}}
+</style>
+<main>
+ <header><h1>Recorder · LoRa Remote</h1><p>Start, stop, and check your Pi recorder over the radio link.</p></header>
+ <section class="panel">
+  <div class="row"><span id="link" class="badge">Waiting for radio</span><span id="age" class="muted">No update yet</span></div>
+  <h2 id="state">Waiting for Pi status</h2><p id="name" class="muted">—</p>
+  <div class="modes"><label><input type="radio" name="mode" value="selected" checked> Selected topics</label><label><input type="radio" name="mode" value="all"> All available topics</label></div>
+  <div id="topic-picker">
+   <div class="row"><button id="refresh-topics" class="small" disabled>Refresh topics</button><span id="selection-count" class="muted">0 selected</span></div>
+   <p id="topic-progress" role="status">Refresh to get the topic list over LoRa.</p>
+   <div id="topic-list" class="topic-list"></div>
+  </div>
+  <div class="actions"><button id="start" disabled>Start recording</button><button id="stop" class="stop" disabled>Stop recording</button></div>
+  <div id="notice" role="status" aria-live="polite">Connecting…</div><p id="warning" hidden></p>
+ </section>
+ <section class="panel metrics">
+  <div class="metric"><span>Recorded time</span><strong id="elapsed">—</strong></div>
+  <div class="metric"><span>Current bag</span><strong id="bag">—</strong></div>
+  <div class="metric"><span>Pi free space</span><strong id="free">—</strong></div>
+  <div class="metric"><span>CPU temperature</span><strong id="temp">—</strong></div>
+  <div class="metric"><span>Topics in current recording</span><strong id="topics">—</strong></div>
+ </section>
+ <p id="browser-error" role="alert"></p>
+ <footer>Files remain on the Pi. Losing radio contact does not stop recording.
+  <details><summary>About radio updates and recording</summary><p>Topic lists load in small chunks over LoRa and may take time. Selected topics uses the fetched list; All available topics discovers the list at Start. New topics appearing later require a new recording.
+  Status is polled about every 5 seconds; the displayed values are the last received snapshot. Stop requests normal bag finalization on the Pi.</p></details></footer>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+let sending=false,lastStatus=null,topicRevision=null,topicNames=[],chosen=new Set();
+const names={idle:'Ready to record',starting:'Starting · waiting for topic data',recording:'Recording',stopping:'Finishing the bag',unavailable:'Pi recorder unavailable',unknown:'Waiting for Pi status'};
+function bytes(n){if(n==null)return '—';const units=['B','KiB','MiB','GiB'];let i=0;while(n>=1024&&i<3){n/=1024;i++}return n.toFixed(i?1:0)+' '+units[i]}
+function time(n){if(n==null)return '—';const s=Math.floor(n);return [Math.floor(s/3600),Math.floor(s/60)%60,s%60].map(v=>String(v).padStart(2,'0')).join(':')}
+function selectedMode(){return document.querySelector('input[name="mode"]:checked').value==='selected'}
+function updateControls(d){
+ const selected=selectedMode();$('topic-picker').hidden=!selected;
+ $('selection-count').textContent=`${chosen.size} selected`;
+ $('start').disabled=sending||!d.can_start||(selected&&(d.topics_loading||chosen.size===0||topicRevision==='0000000000000000'));
+ $('stop').disabled=sending||!d.can_stop;
+ $('refresh-topics').disabled=sending||!d.radio_connected||Boolean(d.pending)||d.topics_loading;
+}
+function renderTopics(d){
+ if(topicRevision!==d.topics_revision){
+  topicRevision=d.topics_revision;topicNames=d.topics||[];
+  if(topicRevision!=='0000000000000000')chosen=new Set([...chosen].filter(name=>topicNames.includes(name)));
+  $('topic-list').replaceChildren();
+  topicNames.forEach(name=>{const label=document.createElement('label'),box=document.createElement('input'),text=document.createElement('span');box.type='checkbox';box.checked=chosen.has(name);text.textContent=name;box.onchange=()=>{box.checked?chosen.add(name):chosen.delete(name);if(lastStatus)updateControls(lastStatus)};label.append(box,text);$('topic-list').append(label)});
+ }
+ const received=d.topics_received_bytes||0,total=d.topics_total_bytes;
+ $('topic-progress').textContent=d.topics_loading?(total?`Loading topic list over LoRa · ${Math.floor(received/total*100)}%`:'Discovering topics on the Pi…'):(d.topics_error||((d.topics||[]).length?`${d.topics.length} topics available`:topicRevision&&topicRevision!=='0000000000000000'?'No topics available':'Refresh to get the topic list over LoRa.'));
+ $('refresh-topics').textContent=d.topics_loading?'Loading…':'Refresh topics';
+}
+function render(d){
+ lastStatus=d;
+ const s=d.status, live=d.radio_connected;
+ $('link').textContent=live?'Radio connected':d.age_seconds==null?'Waiting for radio':'Radio contact lost';
+ $('link').className='badge '+(live?'good':'bad');
+ $('age').textContent=d.age_seconds==null?'No update yet':`Last update ${Math.floor(d.age_seconds)} s ago`;
+ $('state').textContent=(names[s.state]||'Unknown state')+(!live&&d.age_seconds!=null?' · outdated':'');
+ $('name').textContent=s.name||'Choose topics, then start recording';
+ $('elapsed').textContent=time(s.elapsed_seconds);$('bag').textContent=bytes(s.bag_bytes);$('free').textContent=bytes(s.free_bytes);
+ $('temp').textContent=s.temperature_c==null?'—':s.temperature_c.toFixed(1)+' °C';$('topics').textContent=s.topic_count??'—';
+ renderTopics(d);updateControls(d);
+ $('start').textContent=d.pending==='start'?'Starting…':'Start recording';$('stop').textContent=d.pending==='stop'?'Stopping…':'Stop recording';
+ const uncertain=d.last_command?.result==='unknown';
+ $('notice').textContent=d.pending?`Sending ${d.pending} · waiting for Pi acknowledgment…`:!live?(d.error||'Waiting for the first authenticated reply…'):d.synchronized===false?'Synchronizing with Pi over LoRa…':(d.last_command?`${d.last_command.action==='start'?'Start':'Stop'}: ${d.last_command.message}`:'Ready for a command');
+ $('notice').className=uncertain||!live?'warn':'';
+ const warnings=[];if(s.storage_warning)warnings.push('Pi storage is low');if(s.last_recording_error)warnings.push('Previous recording reported an error; inspect it on the Pi');else if(s.last_recording_warning)warnings.push('Previous recording reported a warning; inspect it on the Pi');
+ $('warning').hidden=!warnings.length;$('warning').textContent=warnings.join(' · ');
+}
+async function refresh(){try{const r=await fetch('/api/status',{signal:AbortSignal.timeout(3000)});if(!r.ok)throw Error('Status unavailable');render(await r.json());$('browser-error').textContent=''}catch(e){$('start').disabled=true;$('stop').disabled=true;$('link').textContent='Local controller unavailable';$('link').className='badge bad';$('state').textContent='Status outdated';$('age').textContent='Updates unavailable';$('browser-error').textContent='Cannot reach this laptop’s LoRa controller. Keep its terminal running.'}finally{setTimeout(refresh,1000)}}
+async function command(action){sending=true;$('start').disabled=true;$('stop').disabled=true;$('notice').textContent=`Sending ${action}…`;const body=action==='start'?{mode:selectedMode()?'selected':'all',indices:topicNames.map((name,index)=>chosen.has(name)?index:-1).filter(index=>index>=0),revision:topicRevision}:{};try{const r=await fetch('/api/'+action,{method:'POST',headers:{'X-LoRa-Control':'__CONTROL_TOKEN__','Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(3000)});const d=await r.json();if(!r.ok)throw Error(d.error||'Command rejected');$('notice').textContent=action==='topics'?'Requesting topic list…':`Sending ${action} · waiting for Pi acknowledgment…`}catch(e){$('notice').textContent=e.message+'; check updated status before retrying'}finally{sending=false}}
+$('start').onclick=()=>command('start');$('stop').onclick=()=>command('stop');$('refresh-topics').onclick=()=>command('topics');document.querySelectorAll('input[name="mode"]').forEach(input=>input.onchange=()=>{if(lastStatus)updateControls(lastStatus)});refresh();
+</script>
+</html>

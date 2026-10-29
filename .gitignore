@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+dist/
+*.sqlite3
+*.sqlite3-*
+remote.json
+pi.json
+recorder-pairing.json
+*private*.pyz
