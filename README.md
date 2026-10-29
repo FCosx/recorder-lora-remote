@@ -1,56 +1,43 @@
-# Recorder LoRa Remote
+# Robot Recorder
 
-通过 USB LoRa 电台选择 ROS 2 话题、开始/停止录制，并查看树莓派状态。数据保存在树莓派，不通过 LoRa 传输。
+面向机器人实验的 ROS 2 数据记录器。机器人通过以太网和 Zenoh 将话题数据发送到树莓派；用户在同一局域网的浏览器中选择话题、控制录制，MCAP 文件保存在树莓派。
 
-## 第一次使用记录器
+## 主要功能
 
-请先阅读 **[记录器使用手册（中文）](docs/user-manual.md)**：连接交换机、找到树莓派、在机器人上安装 Humble/Jazzy Zenoh 桥，再从网页选择话题并录制。适用于维护者已配置好的树莓派；无需先克隆本仓库。
+- 发现并选择需要录制的 ROS 2 话题。
+- 开始、停止录制，按文件大小或时长切分 MCAP。
+- 查看录制大小、时长、各话题消息数和平均 Hz，下载或删除录制。
+- 显示录制状态、剩余空间、CPU 温度和简短异常提示。
 
-需要远距离控制时，再按 **[LoRa 使用说明](docs/lora-remote.md)** 配置操作笔记本。LoRa 只传命令与状态；机器人到树莓派的数据仍通过以太网/Zenoh 传输。
+## 第一次使用
 
-## LoRa 首次安装
+**从 [记录器使用手册（中文）](docs/user-manual.md) 开始。** 手册按正常流程提供可复制的命令，再列出特殊情况的排查方法：
 
-需要 Linux、Python 3（建议 3.10 或更新）和 OpenSSL；无需 ROS、Zenoh 或自行编译。
+1. 将机器人、已配置好的树莓派和路由器 LAN 口接入同一交换机。
+2. 找到树莓派的有线 IP，在机器人上完成 Humble/Jazzy Zenoh 桥的一次性安装。
+3. 启动机器人桥和传感器，在局域网浏览器打开 **http://robot-recorder.local:8080**。
+4. 选择话题并录制，完成后查看、下载或删除录制。
 
-```bash
-curl -fL --retry 3 --retry-all-errors \
-  https://github.com/FCosx/recorder-lora-remote/releases/latest/download/recorder-lora-remote.pyz \
-  -o recorder-lora-remote.pyz &&
-python3 recorder-lora-remote.pyz install
-```
+本手册适用于维护者已配置好的树莓派；机器人需已有 ROS 2 Humble 或 Jazzy。首次安装机器人桥需要互联网；日常局域网录制不依赖互联网。无需先克隆本仓库。
 
-首次安装输入维护者提供的配对口令，输入时不显示字符。安装包包含加密配对文件；解密后的凭据仅保存于本机。已有配对更新时无需再次输入，原配对和命令编号会保留。
+## 日常使用
 
-下载需要互联网，也可用 U 盘复制安装包。安装及日常控制不需要树莓派 IP、SSH 或现场网络。
-
-## 每次使用
-
-接好天线，插入配套电台，关闭占用串口的程序，然后运行并保持终端开启：
+完成首次配置后，在**机器人终端**启动桥，录制期间保持运行：
 
 ```bash
-python3 -B ~/robot-recorder/tools/lora_recorder.py remote
+bash ~/robot-recorder/tools/start_robot_bridge.sh
 ```
 
-在**这台笔记本**打开 **http://127.0.0.1:8081**。等待 `Radio connected`，刷新话题并勾选所需项，然后开始/停止录制。关闭终端只会停止远程控制，不会结束树莓派正在进行的录制。同一配对只运行一个控制端。
+启动机器人发布节点，然后在机器人或同网段电脑打开 **http://robot-recorder.local:8080**，选择话题并开始录制。停止后等待文件整理完成，再查看录制结果。
 
-状态请求在收到回复后默认等待 1 秒，再加无线传输时间。需要减少无线流量时，在启动命令末尾加 `--poll-seconds 2`。录制计时器会在本机连续递增并标为估计；大小、空间等数值以树莓派回复为准。
+## 可选增强：LoRa 远程控制
 
-开始前可设置 `Split MCAP files` 的 MiB 或秒数，留空关闭；两项都设置时先达到的条件触发切包。全部切分文件仍归于同一录制。右上角显示树莓派 CPU 温度与最近更新时间。
+需要在局域网外操作时，可增加配套 USB LoRa 电台和操作笔记本，按 [LoRa 使用说明](docs/lora-remote.md) 安装控制端。它提供话题选择、开始/停止、状态查看及简要录制管理；传感器数据仍走机器人与树莓派之间的以太网/Zenoh 链路。
 
-## 查看录制
+LoRa 控制端安装和日常操作不需要树莓派 IP 或现场网络，可离线交付安装包。GitHub 下载需互联网，首次配对口令由维护者私下提供。默认在每次状态回复后等待一秒；LoRa 页面不提供录制下载。
 
-`Refresh recordings` 每次加载 5 个已完成录制，显示名称、开始时间、大小、时长和消息数。`View topics` 加载话题及其消息数、Hz 和类型；`Delete` 确认后永久删除该录制的全部文件，仅空闲时可用。异常录制显示简短 Warning/Error 原因，详情在 `View topics` 中。列表及详情按需通过 LoRa 分块传输，不提供下载。树莓派代理需支持这些功能，由维护者更新。
+## 仓库内容
 
-录制结束后自动刷新最新一页一次，取得元数据后短暂显示实际时长。当前状态包含 MCAP 文件数；错误提示会保留，可用 `Dismiss` 收起。空间条与低空间状态清楚区分可录制和存储不足。
+本仓库目前提供记录器使用手册，以及可选 LoRa 控制端的源码和 [安装包](https://github.com/FCosx/recorder-lora-remote/releases/latest)。树莓派录制服务由维护者预先配置。安装包中的配对授权经过加密；不公开树莓派登录密码或解密后的配对文件。
 
-## 常见问题
-
-- 串口权限不足：`sudo usermod -aG dialout "$USER"`，注销后重新登录。
-- 多个串口：在启动命令末尾添加 `--port /dev/ttyUSB0`，选择正确电台。
-- 找不到电台：检查 USB 连接及 CH340 驱动；BRLTTY 可能占用串口。
-- 缺少 OpenSSL：Ubuntu 运行 `sudo apt install openssl`。
-- 无线无回复：检查两端电源、天线、匹配的电台设置，以及树莓派录制/LoRa 服务。
-
-配对口令需私下交付；不要公开解密后的 `remote.json` 或私有预配对安装包。配对文件加密不等于无线数据加密。远距离效果需实测。
-
-安装包含 pySerial 3.5，许可见 [第三方说明](THIRD_PARTY_NOTICES.md)。
+LoRa 安装包包含 pySerial 3.5，许可见 [第三方说明](THIRD_PARTY_NOTICES.md)。

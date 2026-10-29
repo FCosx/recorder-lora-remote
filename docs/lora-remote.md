@@ -1,6 +1,6 @@
-# Recorder LoRa Remote
+# 可选增强：LoRa 远程控制
 
-首次连接机器人和树莓派时，先完成 [记录器使用手册](user-manual.md) 中的以太网与 Zenoh 设置。本页说明操作笔记本的 LoRa 控制端。
+记录器的主要使用方式是通过局域网页面控制树莓派录制。先按 [记录器使用手册](user-manual.md) 完成以太网与 Zenoh 设置；本页用于需要远距离控制的用户。
 
 通过 USB LoRa 电台选择 ROS 2 话题、开始/停止录制，并查看树莓派状态。数据保存在树莓派，不通过 LoRa 传输。
 
@@ -9,7 +9,9 @@
 需要 Linux、Python 3（建议 3.10 或更新）和 OpenSSL；无需 ROS、Zenoh 或自行编译。
 
 ```bash
-curl -fL https://github.com/FCosx/recorder-lora-remote/releases/latest/download/recorder-lora-remote.pyz -o recorder-lora-remote.pyz
+curl -fL --retry 3 --retry-all-errors \
+  https://github.com/FCosx/recorder-lora-remote/releases/latest/download/recorder-lora-remote.pyz \
+  -o recorder-lora-remote.pyz &&
 python3 recorder-lora-remote.pyz install
 ```
 
