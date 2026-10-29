@@ -52,7 +52,7 @@
     pre { white-space: pre-wrap; overflow-wrap: anywhere; background: #eef2f5; padding: 14px; border-radius: 8px; }
     #message { min-height: 1.5em; }
     .error { color: #a01818; }
-    .health { margin-top: 14px; padding: 12px; border-radius: 8px; background: #eef2f5; }
+    .health { overflow-wrap: anywhere; white-space: pre-wrap; margin-top: 14px; padding: 12px; border-radius: 8px; background: #eef2f5; }
     .health.warning { color: #744600; background: #fff2d6; }
     .health.error { color: #a01818; background: #fdeaea; }
     .health.ok { color: #174d80; background: #e9f1f8; }
@@ -184,12 +184,12 @@ function renderTopics(d){
 }
 function textNode(tag,text,className){const node=document.createElement(tag);node.textContent=text;if(className)node.className=className;return node}
 function renderRecordings(d){
- const key=JSON.stringify([d.recordings,d.recording_info,d.metadata_loading,d.metadata_name,d.pending,deletingName]);
+ const key=JSON.stringify([d.recordings,d.recordings_health,d.recording_info,d.metadata_loading,d.metadata_name,d.pending,deletingName]);
  if(key!==recordingsKey){
   recordingsKey=key;$('recordings').replaceChildren();
   for(const row of d.recordings||[]){
    const [name,size,started,seconds,messages]=row,info=d.recording_info?.[name];
-   const article=document.createElement('article');article.className='recording';article.append(textNode('p',name,'recording-title'));
+   const article=document.createElement('article');article.className='recording';const title=textNode('p',name,'recording-title');const notice=d.recordings_health?.[name];if(notice){const badge=textNode('span',notice.brief,'recording-badge '+notice.state);badge.title=info?.h?.message||notice.brief;title.append(badge)}article.append(title);
    const meta=document.createElement('div');meta.className='recording-meta';
    for(const value of [started?started.replace('T',' '):'Start time unavailable',bytes(info?.s??size),duration(info?.d??seconds),`${count(info?.m??messages)} messages`])meta.append(textNode('span',value));article.append(meta);
    const actions=document.createElement('div');actions.className='recording-actions';
@@ -200,7 +200,7 @@ function renderRecordings(d){
    remove.onclick=()=>{if(confirm(`Delete "${name}" and all its MCAP files from the Pi? This cannot be undone.`)){deletingName=name;command('delete',{name,revision:lastStatus.recordings_revision,confirm:true})}};
    actions.append(view,remove);article.append(actions);
    if(openedBags.has(name)&&info){
-    const panel=document.createElement('div');panel.className='bag-topic-panel';panel.append(textNode('h3','Recorded topics'));
+    const panel=document.createElement('div');panel.className='bag-topic-panel';panel.append(textNode('h3','Recorded topics'));const health=info.h||d.recordings_health?.[name];if(health){const note=textNode('p',health.message||health.brief,'health '+health.state);note.setAttribute('role','status');panel.append(note)}
     const wrap=document.createElement('div');wrap.className='bag-topic-table-wrap';const table=document.createElement('table');table.className='bag-topic-table';
     const head=document.createElement('thead'),tr=document.createElement('tr');for(const label of ['Topic','Messages','Hz','Type'])tr.append(textNode('th',label));head.append(tr);table.append(head);
     const body=document.createElement('tbody');for(const [topic,number,type] of info.topics){const line=document.createElement('tr');for(const value of [topic,count(number),info.d>0&&number!=null?(number/info.d).toFixed(1):'—',type])line.append(textNode('td',value));body.append(line)}table.append(body);wrap.append(table);panel.append(wrap);if(!info.topics.length)panel.append(textNode('p','No topics recorded.','muted'));article.append(panel);

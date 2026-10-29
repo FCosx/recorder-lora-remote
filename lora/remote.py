@@ -21,6 +21,16 @@ LOG = logging.getLogger(__name__)
 FRESH_SECONDS = 15
 
 
+def validate_notice(value):
+    if value is None:
+        return None
+    if (not isinstance(value, dict) or value.get("state") not in ("warning", "error")
+            or not isinstance(value.get("brief"), str) or not 0 < len(value["brief"]) <= 128
+            or ("message" in value and (not isinstance(value["message"], str) or len(value["message"]) > 1024))):
+        raise ValueError("Invalid recording warning")
+    return {key: value[key] for key in ("state", "brief", "message") if key in value}
+
+
 class Counter:
     def __init__(self, path):
         self.db = sqlite3.connect(path)
@@ -67,6 +77,7 @@ class Remote:
         self.topic_transfer = None
         self.topic_error = None
         self.recordings = []
+        self.recordings_health = {}
         self.recordings_revision = ZERO
         self.recordings_total = 0
         self.recordings_offset = 0
@@ -96,6 +107,7 @@ class Remote:
                 "recording_management": bool(self.latest and self.latest.flags & 16),
                 "splitting_supported": bool(self.latest and self.latest.flags & 32),
                 "recordings": self.recordings, "recordings_revision": self.recordings_revision.hex(),
+                "recordings_health": self.recordings_health,
                 "recordings_total": self.recordings_total, "recordings_next": self.recordings_next,
                 "recordings_offset": self.recordings_offset,
                 "recordings_loaded": self.recordings_loaded, "recording_info": self.recording_info,
@@ -192,12 +204,19 @@ class Remote:
                                or not number(row[3]) or not number(row[4]) for row in rows)
                         or len({row[0] for row in rows}) != len(rows)):
                     raise ValueError("Invalid recording list")
+                health = value.get("h", {})
+                if not isinstance(health, dict) or not set(health).issubset({row[0] for row in rows}):
+                    raise ValueError("Invalid recording warnings")
+                health = {name: validate_notice(notice) for name, notice in health.items()}
+                self.recording_info = {name: info for name, info in self.recording_info.items()
+                                       if any(row[0] == name for row in rows)
+                                       and self.recordings_health.get(name) == health.get(name)}
                 self.recordings = rows
+                self.recordings_health = health
                 self.recordings_revision = transfer["transfer"].revision
                 self.recordings_total, self.recordings_next = value["t"], value["n"]
                 self.recordings_offset = int.from_bytes(transfer["selector"], "big")
                 self.recordings_loaded = True
-                self.recording_info = {name: info for name, info in self.recording_info.items() if any(row[0] == name for row in rows)}
             else:
                 topics = value.get("topics")
                 if (not all(number(value.get(field)) for field in ("s", "d", "m"))
@@ -206,6 +225,7 @@ class Remote:
                                or not isinstance(topic[0], str) or len(topic[0]) > 255 or not topic[0].startswith("/")
                                or not number(topic[1]) or not isinstance(topic[2], str) or len(topic[2]) > 255 for topic in topics)):
                     raise ValueError("Invalid recorded topic details")
+                value["h"] = validate_notice(value.get("h"))
                 self.recording_info[transfer["name"]] = value
             self.data_transfer = None
         except (ValueError, zlib.error, KeyError, TypeError) as error:
@@ -354,6 +374,7 @@ class Remote:
                         self.needs_refresh = response is None
                         if op == Op.DELETE and result == Result.ACCEPTED:
                             self.recording_info.pop(self.delete_target, None)
+                            self.recordings_health.pop(self.delete_target, None)
                             self.recordings = [row for row in self.recordings if row[0] != self.delete_target]
                             self.recordings_total = max(0, self.recordings_total - 1)
                             self.data_transfer = {"op": Op.RECORDINGS, "selector": bytes(2), "name": None, "transfer": JSONTransfer()}

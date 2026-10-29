@@ -158,6 +158,7 @@ class Agent:
                     rows = [row for row in page["recordings"] if RECORDING_NAME.fullmatch(row["name"])]
                     value = {"r": [[row["name"], row["bytes"], row["started_at"], row["duration_seconds"],
                                      row["total_messages"]] for row in rows],
+                             "h": {row["name"]: row["health"] for row in rows if row.get("health")},
                              "t": page["total"], "n": page["next_offset"]}
                 else:
                     name = selector.decode("ascii")
@@ -165,6 +166,7 @@ class Agent:
                         return self.snapshot(request, Result.INVALID_RECORDING)
                     info = self.api.recording_info(name)
                     value = {"s": info["bag_size_bytes"], "d": info["duration_seconds"], "m": info["total_messages"],
+                             "h": info.get("health"),
                              "topics": [[topic["name"], topic["messages"], topic["type"]] for topic in info["topics"]]}
                 raw = json.dumps(value, separators=(",", ":")).encode()
                 packed = zlib.compress(raw)

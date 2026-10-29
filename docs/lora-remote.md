@@ -31,7 +31,7 @@ python3 -B ~/robot-recorder/tools/lora_recorder.py remote
 
 ## 查看录制
 
-`Refresh recordings` 每次加载 5 个已完成录制，显示名称、开始时间、大小、时长和消息数。`View topics` 加载话题及其消息数、Hz 和类型；`Delete` 确认后永久删除该录制的全部文件，仅空闲时可用。列表及详情按需通过 LoRa 分块传输，不提供下载。树莓派代理需支持这些功能，由维护者更新。
+`Refresh recordings` 每次加载 5 个已完成录制，显示名称、开始时间、大小、时长和消息数。`View topics` 加载话题及其消息数、Hz 和类型；`Delete` 确认后永久删除该录制的全部文件，仅空闲时可用。异常录制显示简短 Warning/Error 原因，详情在 `View topics` 中。列表及详情按需通过 LoRa 分块传输，不提供下载。树莓派代理需支持这些功能，由维护者更新。
 
 ## 常见问题
 
