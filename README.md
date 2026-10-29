@@ -17,8 +17,8 @@ A ROS 2 data recorder for robot experiments. Robots send topics to a Raspberry P
 
 1. Connect the robot, prepared Pi and router LAN port to the same Ethernet switch.
 2. Find the Pi's wired IP and install the robot's Humble/Jazzy Zenoh bridge once.
-3. Start the robot bridge and sensors, then open **http://robot-recorder.local:8080** from a browser on the local network.
-4. Select topics and record. Inspect, download or delete recordings afterward.
+3. Start the robot bridge and sensors; finish these setup steps before opening the UI.
+4. Open `http://<PI_WIRED_IP>:8080` using the confirmed wired IP, then select topics and record. Inspect, download or delete recordings afterward.
 
 The Pi must already be configured by the maintainer; the robot needs ROS 2 Humble or Jazzy. Installing the robot bridge requires internet access. Routine local recording does not. You do not need to clone this repository first.
 
@@ -30,7 +30,7 @@ After first-time setup, run this in the **robot terminal** and keep it running d
 bash ~/robot-recorder/tools/start_robot_bridge.sh
 ```
 
-Start the robot's publishers, then open **http://robot-recorder.local:8080** on the robot or another computer on the same subnet. Select topics and begin recording. After stopping, wait for finalization before inspecting the result.
+Start the robot's publishers, then open `http://<PI_WIRED_IP>:8080` on the robot or another computer on the same subnet, replacing the placeholder with the confirmed wired address. Select topics and begin recording. After stopping, wait for finalization before inspecting the result. If name resolution works on this computer, `http://robot-recorder.local:8080` is an optional shortcut.
 
 ## Optional enhancement: LoRa remote control
 

@@ -8,31 +8,43 @@ The robot must already have ROS 2 Humble or Jazzy. Complete the one-time bridge 
 
 ## Normal workflow
 
-### 1. Connect the devices and find the Pi
+### 1. Connect the devices and confirm the Pi's wired IP
 
 Power on the Pi and wait for it to boot. Connect the cellular router's LAN port, the Pi and the robot to the **same Ethernet switch**. Connect the operator laptop too if using one. The router supplies local addresses and cellular internet; local recording does not depend on cellular internet. The IR2700-R used in this setup does not provide the Wi-Fi access point needed for this arrangement. The robot's existing Wi-Fi can stay connected.
 
-On the robot or operator laptop, open the full address:
-
-**http://robot-recorder.local:8080**
-
-Keep both `http://` and `:8080`. To configure a new robot bridge, first confirm the Pi's **wired IP**. Run these in a terminal on the robot or operator laptop:
+**Complete steps 1–3 in the terminal before opening the recorder UI in step 4.** First find a Pi address from the **robot or operator laptop**:
 
 ```bash
 timeout 5 getent ahostsv4 robot-recorder.local | awk '{print $1}' | sort -u
-ssh -n recorder@robot-recorder.local 'ip -4 -brief address show dev eth0'
+```
+
+If this returns no address, name discovery is unavailable on this device. Find the Pi's wired lease in the router's DHCP device list, or use a keyboard/display on the **Pi** and run:
+
+```bash
+ip -4 -brief address show dev eth0
 ```
 
 The Pi's SSH username is usually **`recorder`**; ask the maintainer for its password. On first connection, check the host information before accepting it. Password entry does not display characters. Replace `recorder` in the commands if the maintainer uses another username.
 
-The first command resolves the `.local` name. If the Pi has both Wi-Fi and Ethernet, **even a single returned address may be its Wi-Fi address**. The second command checks `eth0`, the wired interface. Read its IPv4 address without `/24` or another prefix length. Enter that address below to check the web service:
+Back on the **robot or operator laptop**, enter the address you found and confirm the Pi's Ethernet address over SSH:
+
+```bash
+read -rp 'Pi address found above: ' PI_ADDR
+ssh "recorder@$PI_ADDR" 'hostname; ip -4 -brief address show dev eth0'
+```
+
+If the Pi has both Wi-Fi and Ethernet, a name lookup may return its Wi-Fi address, even if it returns only one result. Use the IPv4 address on the `eth0` line for setup, without `/24` or another prefix length. If `eth0` has no IPv4 address, check the Pi cable, switch and router DHCP first.
+
+On the **robot**, enter that confirmed wired address and verify the route and recorder service from the terminal:
 
 ```bash
 read -rp 'Pi wired IP (eth0): ' PI_IP
-curl --noproxy '*' --connect-timeout 3 "http://$PI_IP:8080/api/status"
+ip -4 route get "$PI_IP"
+curl -q --noproxy '*' -fsS --connect-timeout 3 --max-time 6 \
+  "http://$PI_IP:8080/api/status"
 ```
 
-Expect a JSON status response. If `eth0` has no IPv4 address, check its cable, switch and router DHCP. If name resolution fails, see “Cannot open the page” below. Normally you do not need to change the robot's IP or disconnect its Wi-Fi.
+The route should use the Ethernet interface connected to the switch, and the service should return JSON status. Continue to step 2 after both checks succeed. If the route uses Wi-Fi or the request fails, use the troubleshooting section below. Normally you do not need to change the robot's IP or disconnect its Wi-Fi. Keep the wired address for the remaining steps; the browser is opened only after setup.
 
 ### 2. Install and configure the robot bridge once
 
@@ -49,7 +61,7 @@ bash /tmp/install_robot_bridge.sh --pi-url "http://$PI_IP:8080"
 
 Enter the robot's sudo password when prompted and wait for `Setup complete`. The script detects the installed ROS distribution; if both Humble and Jazzy are present, it asks which to use. It automatically builds the bridge locally on first installation, which can take a while. If interrupted, fix the error or restore connectivity, then rerun the same block.
 
-The installed files and configuration are under the robot user's `~/robot-recorder/`. The default robot ROS domain is **0**; the Pi recorder uses domain **1**. After starting the bridge, use step 3 to check the robot's topics in the browser. The corrected bridge has passed repeated-restart tests on the development laptop; its first deployment on an Orin still needs on-device validation.
+The installed files and configuration are under the robot user's `~/robot-recorder/`. The default robot ROS domain is **0**; the Pi recorder uses domain **1**. After starting the bridge in step 3, open the browser in step 4 to check the robot's topics. The corrected bridge has passed repeated-restart tests on the development laptop; its first deployment on an Orin still needs on-device validation.
 
 ### 3. Start the robot bridge each time
 
@@ -61,12 +73,21 @@ bash ~/robot-recorder/tools/start_robot_bridge.sh
 
 Run one robot bridge at a time. Exit any earlier manually started bridge first; if an original bridge runs as a service, stop that service first. Running `zenoh-bridge-ros2dds -c ...` directly may launch the uncorrected system version.
 
-Start the robot's sensors and ROS publishers. On the robot or operator laptop, open **http://robot-recorder.local:8080**, keep the UI's ROS domain at **1**, and click `Refresh topics`. The robot's topics should appear. If expected topics are missing, see the troubleshooting section.
+Start the robot's sensors and ROS publishers, and leave the bridge running. Setup is now ready for the browser step below.
 
-### 4. Record and inspect data
+### 4. Open the UI, record and inspect data
 
-1. Keep the robot bridge running, open **http://robot-recorder.local:8080**, and wait for `Ready to record`. Keep the UI's ROS domain at **1**.
-2. Click `Refresh topics` and select the topics to save. To split a long recording, enter a size in MiB, a duration in seconds, or both under `Split MCAP files`. Leave both blank to disable splitting. Click `Begin recording`. A listed topic is not proof that messages are currently arriving.
+Only after completing steps 1–3, use the **wired IP confirmed in step 1** to open the UI. On the robot or operator laptop, print the address:
+
+```bash
+read -rp 'Pi wired IP confirmed in step 1: ' PI_IP
+printf 'Recorder URL: http://%s:8080\n' "$PI_IP"
+```
+
+Open the printed URL in that computer's browser. Include `http://` and `:8080`. If `.local` resolution works on this computer, **http://robot-recorder.local:8080** is an optional shortcut; use the confirmed wired IP if it fails or resolves to an unsuitable interface.
+
+1. Wait for `Ready to record` and keep the UI's ROS domain at **1**. Keep the robot bridge running.
+2. Click `Refresh topics` and select the topics to save. To split a long recording, enter a size in MiB, a duration in seconds, or both under `Split MCAP files`. Leave both blank to disable splitting. Click `Begin recording`. A listed topic is not proof that messages are currently arriving. If expected topics are missing, see troubleshooting.
 3. Click `Stop recording` when finished and wait for finalization. Keep the Pi powered during this process.
 4. Under `Recordings on the Pi`, click the recording's `View topics` to inspect per-topic message counts. Split MCAP files belong to one recording: expand its file list to inspect segments; `View topics` summarizes the whole recording. `Download` saves a TAR copy containing all segments to the browser's computer. `Delete` permanently removes that recording and all its segments from the Pi.
 
@@ -106,17 +127,19 @@ An IPv4 address on `wlan0` indicates that the wireless interface is configured. 
 
 ### Cannot open the page
 
-1. Use **`http://robot-recorder.local:8080`**, including `http://` and `:8080`.
-2. On the computer running the browser, check name resolution and direct access:
+1. Use `http://<PI_WIRED_IP>:8080`, replacing `<PI_WIRED_IP>` with the wired address confirmed in step 1. Include `http://` and `:8080`.
+2. On the computer running the browser, check the route and direct service response:
 
    ```bash
-   getent ahostsv4 robot-recorder.local
-   curl --noproxy '*' --max-time 5 http://robot-recorder.local:8080/api/status
+   read -rp 'Pi wired IP: ' PI_IP
+   ip -4 route get "$PI_IP"
+   curl -q --noproxy '*' -fsS --connect-timeout 3 --max-time 6 \
+     "http://$PI_IP:8080/api/status"
    ```
 
-3. If the name does not resolve, check Pi power and Ethernet. Find `robot-recorder` in the router's DHCP device list, or run `ip -4 -brief address show dev eth0` on the Pi. For `.local` resolution, check `systemctl is-active avahi-daemon.service` on the Pi and ensure the network permits mDNS multicast. Ask the maintainer to configure name resolution if needed; a wired IP can be used in the meantime.
-4. If direct command-line access works but the browser shows **502**, add `robot-recorder.local` to the browser/system proxy bypass list.
-5. Try `http://<PI_WIRED_IP>:8080` using the confirmed wired IP. On the Pi, also check `systemctl is-active robot-recorder.service`.
+3. If the wired IP works but the optional `.local` shortcut fails, run `getent ahostsv4 robot-recorder.local` on this computer. Name resolution is not required to continue with the wired IP. For `.local` resolution, check `systemctl is-active avahi-daemon.service` on the Pi and ensure the network permits mDNS multicast; ask the maintainer to configure it if needed.
+4. If direct command-line access works but the browser shows **502**, add the Pi's wired IP and, if used, `robot-recorder.local` to the browser/system proxy bypass list.
+5. If direct access still fails, check Pi power, Ethernet and the wired IP in the router's DHCP list. On the Pi, check `systemctl is-active robot-recorder.service`. If routing uses Wi-Fi, follow the next section.
 
 ### Traffic uses the wrong interface
 
@@ -159,7 +182,7 @@ If the temporary installer script was removed, first download it again using ste
 
 Check that the robot is publishing and its bridge is running, then click `Refresh topics`. The robot bridge must use the publishers' domain (**0** in this project's tests); the Pi UI uses domain **1**. Check the Pi IP in the robot's `robot.json5`. Use the configuration update above if the IP or domain changed. TCP port **7447** must be reachable from the robot to the Pi.
 
-If topics remain missing, use `ssh recorder@robot-recorder.local` from the robot or operator laptop, then check both services on the **Pi**:
+If topics remain missing, connect over SSH using the confirmed Pi wired IP as in step 1, then check both services on the **Pi**:
 
 ```bash
 systemctl is-active robot-recorder-bridge.service robot-recorder.service
@@ -181,7 +204,7 @@ Compare the average recorded Hz in `View topics` with the robot's actual publish
 
 ### A recording contains no messages
 
-Keep the robot publishers running and connect to the Pi with `ssh recorder@robot-recorder.local`. Run this on the **Pi**:
+Keep the robot publishers running and connect over SSH using the confirmed Pi wired IP as in step 1. Run this on the **Pi**:
 
 ```bash
 source /opt/ros/jazzy/setup.bash

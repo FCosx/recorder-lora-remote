@@ -8,31 +8,43 @@
 
 ## 正常使用流程
 
-### 1. 连接设备并找到树莓派
+### 1. 连接设备并确认树莓派有线 IP
 
 先打开树莓派，等待启动完成。把蜂窝路由器的 LAN 口、树莓派和机器人接到**同一台以太网交换机**；如使用操作笔记本，也将它接入交换机。路由器提供局域网地址和蜂窝网络连接；本地录制不依赖蜂窝网络。当前使用的 IR2700-R 不提供本方案所需的 Wi-Fi 接入点。机器人已有的 Wi-Fi 可以保持连接。
 
-在机器人或操作笔记本的浏览器中输入完整网址：
-
-**http://robot-recorder.local:8080**
-
-务必保留开头的 `http://` 和末尾的 `:8080`。首次配置机器人桥时，需要确认树莓派的**有线 IP**。在机器人或操作笔记本终端依次运行：
+**先在终端完成第 1–3 步，再在第 4 步打开记录器网页。** 先在**机器人或操作笔记本**查找树莓派地址：
 
 ```bash
 timeout 5 getent ahostsv4 robot-recorder.local | awk '{print $1}' | sort -u
-ssh -n recorder@robot-recorder.local 'ip -4 -brief address show dev eth0'
+```
+
+若没有输出，说明这台设备暂时无法通过名称找到树莓派。请在路由器的 DHCP 设备列表中查找树莓派的有线租约，或给**树莓派**接上键盘和屏幕，在树莓派上运行：
+
+```bash
+ip -4 -brief address show dev eth0
 ```
 
 树莓派 SSH 用户名通常为 **`recorder`**，密码请向维护者索取。首次连接若询问是否信任主机，核对主机信息后再确认；输入密码时不会显示字符。若维护者更改了用户名，请将命令中的 `recorder` 替换为实际用户名。
 
-第一条命令查询 `.local` 名称对应的地址；树莓派同时连接 Wi-Fi 和有线网络时，**即使只返回一个地址，也可能是 Wi-Fi 地址**。第二条命令查询 `eth0`，它显示的才是配置桥所需的有线 IP。读取 `eth0` 行里的 IPv4 地址，不要包含 `/24` 等前缀长度。然后输入该地址，确认网页服务可访问：
+回到**机器人或操作笔记本**，输入刚找到的地址，通过 SSH 确认树莓派的有线地址：
+
+```bash
+read -rp '刚查到的树莓派地址: ' PI_ADDR
+ssh "recorder@$PI_ADDR" 'hostname; ip -4 -brief address show dev eth0'
+```
+
+树莓派同时连接 Wi-Fi 和以太网时，名称查询即使只返回一个结果，也可能是 Wi-Fi 地址。后续设置请使用 `eth0` 行里的 IPv4 地址，不要包含 `/24` 等前缀长度。若 `eth0` 没有 IPv4 地址，先检查树莓派的网线、交换机和路由器 DHCP。
+
+在**机器人**输入确认后的有线地址，先通过终端检查路由和记录器服务：
 
 ```bash
 read -rp '树莓派有线 IP（eth0）: ' PI_IP
-curl --noproxy '*' --connect-timeout 3 "http://$PI_IP:8080/api/status"
+ip -4 route get "$PI_IP"
+curl -q --noproxy '*' -fsS --connect-timeout 3 --max-time 6 \
+  "http://$PI_IP:8080/api/status"
 ```
 
-应返回状态 JSON。若 `eth0` 没有 IPv4 地址，先检查树莓派的网线、交换机和路由器 DHCP；若名称无法解析，按文末“网页无法打开”排查。正常情况下无需更改机器人的 IP 或关闭机器人的 Wi-Fi。
+路由应走连接交换机的有线网口，服务应返回状态 JSON；两项确认正常后再继续第 2 步。若路由走 Wi-Fi 或请求失败，先按文末排查。正常情况下无需更改机器人的 IP 或关闭 Wi-Fi。记下该有线地址，后续步骤还要使用；此时先不打开浏览器。
 
 ### 2. 自动安装并配置机器人桥（只需一次）
 
@@ -49,7 +61,7 @@ bash /tmp/install_robot_bridge.sh --pi-url "http://$PI_IP:8080"
 
 按提示输入机器人的 sudo 密码，等待显示 `Setup complete`。脚本会自动识别 ROS 版本；如果同时安装了 Humble 和 Jazzy，会询问要使用哪个。首次安装会在后台自动完成本机编译，可能需要较长时间；用户不需要参与构建。如果安装中断，处理报错或恢复网络后，重新粘贴同一段命令即可。
 
-安装后，程序和配置保存在机器人用户的 `~/robot-recorder/` 中。脚本默认使用 ROS 域 **0**，树莓派记录器使用域 **1**。启动桥后，按第 3 步在网页查看机器人正在发布的话题。修复版已在开发笔记本通过连续重启测试；Orin 上的实际运行仍需首次部署验证。
+安装后，程序和配置保存在机器人用户的 `~/robot-recorder/` 中。脚本默认使用 ROS 域 **0**，树莓派记录器使用域 **1**。按第 3 步启动桥后，再到第 4 步打开网页查看机器人正在发布的话题。修复版已在开发笔记本通过连续重启测试；Orin 上的实际运行仍需首次部署验证。
 
 ### 3. 启动机器人桥（每次使用时）
 
@@ -61,12 +73,21 @@ bash ~/robot-recorder/tools/start_robot_bridge.sh
 
 每次使用时启动一个机器人桥即可，录制期间保持运行。启动前先退出之前手动运行的桥；如果原版桥由服务启动，先停止该服务。直接运行 `zenoh-bridge-ros2dds -c ...` 仍可能启动系统中的未修复版。
 
-确认机器人的传感器和 ROS 节点已启动，正在发布需要记录的话题。然后在机器人或操作笔记本打开 **http://robot-recorder.local:8080**，界面的 ROS 域保持为 **1**，点击 `Refresh topics`。连接成功后，列表中应显示机器人自己的话题，接下来可直接选择并录制。若没有显示预期话题，按文末“看不到机器人话题”排查。
+启动机器人的传感器和 ROS 发布节点，保持桥继续运行。完成这些设置后，再按下一步打开网页。
 
-### 4. 开始录制
+### 4. 打开网页、录制并查看数据
 
-1. 确认机器人上的桥仍在运行，在机器人或操作笔记本打开 **http://robot-recorder.local:8080**，等待状态显示 `Ready to record`（可以开始录制）。界面的 ROS 域保持为 **1**。
-2. 点击 `Refresh topics`，选择需要保存的话题。需要把长录制分成多个文件时，在 `Split MCAP files` 中填写按大小切分的阈值（MiB）、按时长切分的阈值（秒），或两者都填；留空则不切分。设置好后点击 `Begin recording`。只有话题出现在列表中，并不代表它正在发送消息。
+**完成第 1–3 步后**，使用第 1 步确认的**树莓派有线 IP**访问网页。在机器人或操作笔记本终端生成网址：
+
+```bash
+read -rp '第 1 步确认的树莓派有线 IP: ' PI_IP
+printf 'Recorder URL: http://%s:8080\n' "$PI_IP"
+```
+
+在这台设备的浏览器中打开打印出的网址，保留 `http://` 和 `:8080`。若这台设备支持 `.local` 名称解析，也可把 **http://robot-recorder.local:8080** 作为快捷方式；打不开或解析到不合适的网口时，使用已确认的有线 IP。
+
+1. 等待 `Ready to record`（可以开始录制），界面的 ROS 域保持为 **1**，机器人桥继续运行。
+2. 点击 `Refresh topics`，选择需要保存的话题。需要把长录制分成多个文件时，在 `Split MCAP files` 中填写按大小切分的阈值（MiB）、按时长切分的阈值（秒），或两者都填；留空则不切分。设置好后点击 `Begin recording`。只有话题出现在列表中，并不代表它正在发送消息；看不到预期话题时，按文末排查。
 3. 录制结束时点击 `Stop recording`，等待界面完成文件整理。整理期间不要关闭树莓派电源。
 4. 在 `Recordings on the Pi` 中点击对应录制的 `View topics`，核对各话题的消息数。切分后的多个 MCAP 文件仍属于同一次录制，可以展开查看每段文件；`View topics` 显示整次录制的汇总。`Download` 会把包含所有分段的 TAR 副本下载到当前浏览器所在设备；`Delete` 会永久删除树莓派上的该次录制及所有分段。
 
@@ -106,17 +127,19 @@ ssh recorder@robot-recorder.local 'ip -4 -brief address show dev wlan0'
 
 ### 网页无法打开
 
-1. 确认输入的是 **`http://robot-recorder.local:8080`**，包含 `http://` 和 `:8080`。
-2. 在打开网页的设备上检查名称解析和网页响应：
+1. 使用 `http://<树莓派有线IP>:8080`，把占位符替换为第 1 步确认的有线地址，保留 `http://` 和 `:8080`。
+2. 在打开网页的设备上检查路由和直连服务响应：
 
    ```bash
-   getent ahostsv4 robot-recorder.local
-   curl --noproxy '*' --max-time 5 http://robot-recorder.local:8080/api/status
+   read -rp '树莓派有线 IP: ' PI_IP
+   ip -4 route get "$PI_IP"
+   curl -q --noproxy '*' -fsS --connect-timeout 3 --max-time 6 \
+     "http://$PI_IP:8080/api/status"
    ```
 
-3. 如果名称无法解析，先确认树莓派已开机且网线已连接；到路由器 DHCP 设备列表查找 `robot-recorder`，或在树莓派上运行 `ip -4 -brief address show dev eth0`。若要使用 `.local` 名称，再在树莓派上检查 `systemctl is-active avahi-daemon.service`，并确认网络允许 mDNS 组播。名称服务未配置时，请联系维护者处理；也可先用有线 IP 访问。
-4. 如果命令行直连正常，但浏览器显示 **502**，请把 `robot-recorder.local` 加入浏览器或系统代理的“不使用代理”列表。
-5. 如果仍无法打开，到路由器的 DHCP 设备列表中查找树莓派地址，或在树莓派上运行 `ip -4 -brief address show eth0`，再试 `http://<树莓派IP>:8080`。同时检查 `systemctl is-active robot-recorder.service`。
+3. 如果有线 IP 可访问，但可选的 `.local` 快捷方式不可用，在这台设备运行 `getent ahostsv4 robot-recorder.local` 检查解析；可继续用有线 IP，无需等待名称解析修好。若要使用 `.local`，在树莓派检查 `systemctl is-active avahi-daemon.service`，并确认网络允许 mDNS 组播；需要时联系维护者配置。
+4. 如果命令行直连正常，但浏览器显示 **502**，请把树莓派有线 IP，以及使用中的 `robot-recorder.local`，加入浏览器或系统代理的“不使用代理”列表。
+5. 如果直连仍失败，检查树莓派电源、网线及路由器 DHCP 列表中的有线地址，在树莓派检查 `systemctl is-active robot-recorder.service`。若路由走 Wi-Fi，按下一节处理。
 
 ### 有线网络走错网口
 
@@ -159,7 +182,7 @@ bash ~/robot-recorder/tools/start_robot_bridge.sh
 
 确认机器人正在发布、机器人桥仍在运行，然后点击 `Refresh topics`。检查机器人桥的域与发布节点相同（本项目测试为 **0**）、网页使用 ROS 域 **1**，以及机器人配置文件 `robot.json5` 中的树莓派 IP。需要修改地址或 ROS 域时，使用上面的配置更新命令。机器人到树莓派的 TCP **7447** 端口也必须可达。
 
-如果仍看不到话题，从机器人或操作笔记本运行 `ssh recorder@robot-recorder.local` 登录树莓派，再检查两个服务是否都显示 `active`：
+如果仍看不到话题，按第 1 步使用确认后的有线 IP 登录树莓派，再检查两个服务是否都显示 `active`：
 
 ```bash
 systemctl is-active robot-recorder-bridge.service robot-recorder.service
@@ -179,7 +202,7 @@ pgrep -af '[z]enoh-bridge-ros2dds'
 
 ### 录制结果没有消息
 
-先保持机器人发布节点运行，再从机器人或操作笔记本运行 `ssh recorder@robot-recorder.local` 登录树莓派。在**树莓派**上执行：
+先保持机器人发布节点运行，再按第 1 步使用确认后的有线 IP 登录树莓派。在**树莓派**上执行：
 
 ```bash
 source /opt/ros/jazzy/setup.bash
