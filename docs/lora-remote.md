@@ -33,6 +33,8 @@ python3 -B ~/robot-recorder/tools/lora_recorder.py remote
 
 `Refresh recordings` 每次加载 5 个已完成录制，显示名称、开始时间、大小、时长和消息数。`View topics` 加载话题及其消息数、Hz 和类型；`Delete` 确认后永久删除该录制的全部文件，仅空闲时可用。异常录制显示简短 Warning/Error 原因，详情在 `View topics` 中。列表及详情按需通过 LoRa 分块传输，不提供下载。树莓派代理需支持这些功能，由维护者更新。
 
+录制结束后自动刷新最新一页一次，取得元数据后短暂显示实际时长。当前状态包含 MCAP 文件数；错误提示会保留，可用 `Dismiss` 收起。空间条与低空间状态清楚区分可录制和存储不足。
+
 ## 常见问题
 
 - 串口权限不足：`sudo usermod -aG dialout "$USER"`，注销后重新登录。

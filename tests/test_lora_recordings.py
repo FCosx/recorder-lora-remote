@@ -20,6 +20,7 @@ class SavedAPI:
         self.value = {'state': 'idle', 'name': None, 'topics': [], 'can_start': True}
         self.rows = [{'name': f'recording-20261029-12000{i}', 'bytes': 2048+i, 'started_at': '2026-10-29T12:00:00',
                       'duration_seconds': 10.5, 'total_messages': 21} for i in range(7)]
+        self.list_reads = 0
         self.deleted = []
         self.lose_delete = False
         self.detail_health = {}
@@ -29,6 +30,7 @@ class SavedAPI:
         return copy.deepcopy(self.value)
 
     def recordings(self, offset):
+        self.list_reads += 1
         return {'recordings': self.rows[offset:offset+5], 'total': len(self.rows),
                 'next_offset': offset+5 if offset+5 < len(self.rows) else None}
 

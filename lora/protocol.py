@@ -30,6 +30,7 @@ CATALOG_REQUEST = struct.Struct("!8sH")
 CATALOG_RESPONSE = struct.Struct("!8sHH")
 SYNC_RESPONSE = struct.Struct("!16sQ")
 SPLIT_LIMITS = struct.Struct("!II")
+STATUS_SEGMENTS = struct.Struct("!H")
 MAX_SPLIT_SIZE_MIB = 1024 * 1024
 MAX_SPLIT_DURATION_SECONDS = 7 * 24 * 60 * 60
 RECORDING_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}\Z")
@@ -242,6 +243,7 @@ class Response:
                    data=payload[offset + size:])
 
     def as_dict(self):
+        segments = STATUS_SEGMENTS.unpack(self.data)[0] if self.op == Op.STATUS and len(self.data) == STATUS_SEGMENTS.size else 65535
         return {
             "state": self.state.name.lower(), "name": self.name or None,
             "elapsed_seconds": None if self.elapsed_ms == UNKNOWN32 else self.elapsed_ms / 1000,
@@ -250,6 +252,7 @@ class Response:
             "total_bytes": None if self.total_bytes == UNKNOWN64 else self.total_bytes,
             "temperature_c": None if self.temperature_tenths == 32767 else self.temperature_tenths / 10,
             "topic_count": self.topic_count, "storage_warning": bool(self.flags & 1),
+            "segment_count": None if segments == 65535 else segments,
             "can_start": bool(self.flags & 2), "last_recording_warning": bool(self.flags & 4),
             "last_recording_error": bool(self.flags & 8),
         }

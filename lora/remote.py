@@ -87,18 +87,29 @@ class Remote:
         self.data_transfer = None
         self.recordings_error = None
         self.delete_target = None
+        self.segment_sample = None
+        self.completion_target = None
+        self.completion_refresh_due = False
+        self.completed_recording = None
+        self.completed_at = None
 
     def status(self):
         with self.lock:
             age = None if self.received_at is None else max(0, time.monotonic() - self.received_at)
             online = age is not None and age <= FRESH_SECONDS
             data = self.latest.as_dict() if self.latest else {"state": "unknown"}
+            if self.latest and self.segment_sample and self.segment_sample[:2] == (self.latest.boot, self.latest.recording):
+                data["segment_count"] = self.segment_sample[2]
+            completed_age = None if self.completed_at is None else max(0, time.monotonic() - self.completed_at)
             return {
                 "radio_connected": online, "age_seconds": age,
                 "synchronized": self.synchronized,
                 "status": data, "pending": self.pending, "last_command": self.command,
                 "error": self.error, "poll_seconds": self.poll_seconds,
                 "fresh_seconds": FRESH_SECONDS,
+                "completed_recording": self.completed_recording if completed_age is not None and completed_age < 10 else None,
+                "completion_age_seconds": completed_age,
+                "completion_pending": self.completion_refresh_due or bool(self.data_transfer and self.data_transfer.get("completion")),
                 "topics": self.catalog, "topics_revision": self.catalog_revision.hex(),
                 "topics_loading": self.topic_transfer is not None,
                 "topics_received_bytes": len(self.topic_transfer["data"]) if self.topic_transfer else 0,
@@ -217,6 +228,15 @@ class Remote:
                 self.recordings_total, self.recordings_next = value["t"], value["n"]
                 self.recordings_offset = int.from_bytes(transfer["selector"], "big")
                 self.recordings_loaded = True
+                finished = next((row for row in rows if row[0] == self.completion_target), None)
+                if finished is not None and finished[3] is not None:
+                    self.completed_recording = {"name": finished[0], "bag_bytes": finished[1],
+                                                "duration_seconds": finished[3], "messages": finished[4]}
+                    self.completed_at = time.monotonic()
+                    self.completion_target = None
+                    self.completion_refresh_due = False
+                elif transfer.get("completion"):
+                    self.completion_target = None
             else:
                 topics = value.get("topics")
                 if (not all(number(value.get(field)) for field in ("s", "d", "m"))
@@ -276,6 +296,29 @@ class Remote:
             self.topic_error = str(error)
             self.topic_transfer = None
 
+    def accept_snapshot(self, response):
+        previous = self.latest
+        if previous is not None and previous.boot != response.boot:
+            self.completion_target = None
+            self.completion_refresh_due = False
+            self.completed_recording = None
+            self.completed_at = None
+            self.segment_sample = None
+        elif (previous is not None and previous.name and previous.state in (State.STARTING, State.RECORDING, State.STOPPING)
+              and response.state == State.IDLE and response.flags & 16):
+            self.completion_target = previous.name
+            self.completion_refresh_due = True
+            self.completed_recording = None
+            self.completed_at = None
+        if response.op == Op.STATUS:
+            self.segment_sample = (response.boot, response.recording, response.as_dict()["segment_count"])
+        if self.latest is not None and self.latest.boot != response.boot and response.op != Op.SYNC:
+            self.synchronized = False
+        self.latest = response
+        self.received_at = time.monotonic()
+        self.error = None
+        self.needs_refresh = False
+
     def exchange(self, request):
         frame = request.encode(self.key)
         for attempt in range(self.attempts):
@@ -322,6 +365,11 @@ class Remote:
                             elif self.data_transfer is not None:
                                 op, snapshot = self.data_transfer["op"], None
                                 data = self.data_transfer["transfer"].request() + self.data_transfer["selector"]
+                            elif self.completion_refresh_due and not self.pending:
+                                self.completion_refresh_due = False
+                                self.data_transfer = {"op": Op.RECORDINGS, "selector": bytes(2), "name": None,
+                                                      "transfer": JSONTransfer(), "completion": True}
+                                continue
                             else:
                                 continue
                 request = Request(op, counter.next(), **({
@@ -343,12 +391,7 @@ class Remote:
                             sync_error = str(error)
                             response = None
                     if response is not None:
-                        if self.latest is not None and self.latest.boot != response.boot and op != Op.SYNC:
-                            self.synchronized = False
-                        self.latest = response
-                        self.received_at = time.monotonic()
-                        self.error = None
-                        self.needs_refresh = False
+                        self.accept_snapshot(response)
                     else:
                         self.synchronized = False
                         self.needs_refresh = True
@@ -368,11 +411,14 @@ class Remote:
                     elif op not in (Op.STATUS, Op.SYNC):
                         result = response.result if response else Result.UNKNOWN
                         action = "delete" if op == Op.DELETE else "start" if op in (Op.START, Op.START_SELECTED) else "stop"
-                        self.command = {"action": action, "name": self.delete_target if op == Op.DELETE else None, "result": result.name.lower(),
+                        self.command = {"id": str(request.number), "action": action, "name": self.delete_target if op == Op.DELETE else None, "result": result.name.lower(),
                                         "message": RESULT_TEXT[result]}
                         self.pending = None
                         self.needs_refresh = response is None
                         if op == Op.DELETE and result == Result.ACCEPTED:
+                            if self.completed_recording and self.completed_recording["name"] == self.delete_target:
+                                self.completed_recording = None
+                                self.completed_at = None
                             self.recording_info.pop(self.delete_target, None)
                             self.recordings_health.pop(self.delete_target, None)
                             self.recordings = [row for row in self.recordings if row[0] != self.delete_target]

@@ -17,7 +17,7 @@ from urllib.request import ProxyHandler, Request as HTTPRequest, build_opener
 from .common import SerialLink
 from .protocol import (
     CATALOG_REQUEST, CATALOG_RESPONSE, COMMAND_LIFETIME, MAX_PAYLOAD, RESPONSE,
-    RECORDING_NAME, SPLIT_LIMITS, SYNC_RESPONSE, UNKNOWN32, UNKNOWN64, ZERO, Op, Request, Response, Result, State, recording_token, split_limits,
+    RECORDING_NAME, SPLIT_LIMITS, STATUS_SEGMENTS, SYNC_RESPONSE, UNKNOWN32, UNKNOWN64, ZERO, Op, Request, Response, Result, State, recording_token, split_limits,
 )
 
 
@@ -292,17 +292,20 @@ class Agent:
         except Exception:
             status = {}
             state = State.UNAVAILABLE
-        flags = 16 | 32 | int(bool(status.get("storage_warning"))) | (int(bool(status.get("can_start"))) << 1)
+        flags = 16 | 32 | 64 | int(bool(status.get("storage_warning"))) | (int(bool(status.get("can_start"))) << 1)
         health = status.get("last_result") or {}
         flags |= int(health.get("state") == "warning") << 2
         flags |= int(health.get("state") == "error") << 3
         try:
-            temperature = int(round(float(self.temperature_path.read_text().strip()) / 100))
+            value = status.get("temperature_c")
+            temperature = int(round(value * 10)) if value is not None else int(round(float(self.temperature_path.read_text().strip()) / 100))
             if not -32768 <= temperature < 32767:
                 temperature = 32767
         except (OSError, ValueError):
             temperature = 32767
         elapsed = status.get("elapsed_seconds")
+        segments = status.get("segment_count")
+        segment_data = STATUS_SEGMENTS.pack(segments if type(segments) is int and 0 <= segments < 65535 else 65535) if request.op == Op.STATUS else b""
         return Response(
             request.op, request.number, result, state, flags,
             unsigned(None if elapsed is None else elapsed * 1000, UNKNOWN32),
@@ -312,6 +315,7 @@ class Agent:
             temperature, min(65535, len(status.get("topics", []))),
             recording_token(status.get("name")), self.boot, int(self.clock()),
             status.get("name") or "",
+            data=segment_data,
         )
 
     def handle(self, request):

@@ -47,3 +47,14 @@ assert.equal(timer.reading(56000).seconds, 1, 'Never carry the previous recordin
 timer.update(sample('recording', null), 57000);
 assert.equal(timer.reading(59000).seconds, null, 'Unknown elapsed time must stay unknown');
 console.log('LoRa browser timer: all behavior checks passed.');
+// Hold the estimate only while requesting final metadata; then show the actual bag duration.
+timer.update(sample('recording',20),60000);
+timer.update({status:{state:'idle',name:null,elapsed_seconds:null},completion_pending:true},62000);
+assert.equal(timer.reading(65000).seconds,22);
+assert.equal(timer.reading(65000).estimated,true);
+timer.update({status:{state:'idle',name:null,elapsed_seconds:null},completed_recording:{duration_seconds:19.5},completion_age_seconds:0},66000);
+assert.equal(timer.reading(66500).seconds,19.5);
+assert.equal(timer.reading(66500).estimated,false);
+assert.equal(timer.reading(66500).final,true);
+assert.equal(timer.reading(77000).seconds,null,'Confirmed completion hides after ten seconds');
+console.log('LoRa confirmed completion timer checks passed.');

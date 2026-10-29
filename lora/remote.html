@@ -99,11 +99,12 @@
 <section class="card">
  <div class="row" style="justify-content:space-between"><h2>Status</h2><div class="row"><span id="link" class="badge">Waiting for radio</span><div class="status-updates"><span id="cpu-temp">CPU temperature: —</span><span id="age" class="muted">No update yet</span></div></div></div>
  <div id="status" class="recorder-status"><strong id="state">Connecting to recorder…</strong><span id="name">Waiting for Pi status.</span></div>
+ <div id="timer" class="recording-timer" role="timer" hidden><div class="timer-heading"><span class="timer-dot" aria-hidden="true"></span><span id="elapsed-label">Recording time</span></div><strong id="elapsed" class="timer-value">—</strong></div>
  <div class="storage-metrics">
-  <div class="storage-metric"><span class="storage-label">Pi free space</span><strong id="free" class="storage-value">—</strong><span id="total" class="storage-detail">Storage unavailable</span></div>
-  <div class="storage-metric is-bag"><span class="storage-label">Current bag size</span><strong id="bag" class="storage-value">—</strong><span id="topics" class="storage-detail">No active recording</span></div>
+  <div id="free-space-card" class="storage-metric"><span class="storage-label">Pi free space</span><strong id="free" class="storage-value">—</strong><span id="total" class="storage-detail">Storage unavailable</span><meter id="storage-meter" class="storage-meter" min="0" max="100" value="0" optimum="100" aria-label="Available Pi storage" hidden></meter><p id="storage-notice" class="storage-notice" role="status" hidden></p></div>
+  <div id="bag-size-card" class="storage-metric is-bag"><span class="storage-label">Current bag size</span><strong id="bag" class="storage-value">—</strong><span id="topics" class="storage-detail">No active recording</span></div>
  </div>
- <div id="timer" class="recording-timer" hidden><span id="elapsed-label" class="timer-heading">Recorded time</span><strong id="elapsed" class="timer-value">—</strong></div>
+
  <fieldset id="split-options" class="split-options" disabled>
   <legend>Split MCAP files (optional)</legend>
   <div class="row">
@@ -113,7 +114,7 @@
   <p class="muted">Leave blank for one file. If both limits are set, the first reached starts a new file.</p>
  </fieldset>
  <div class="row"><button id="start" disabled>Begin recording</button><button id="stop" class="stop" disabled>Stop recording</button></div>
- <p id="notice" role="status" aria-live="polite">Connecting…</p><p id="warning" class="warning" hidden></p>
+ <div class="row"><p id="notice" role="status" aria-live="polite">Connecting…</p><button id="dismiss-notice" class="secondary" hidden>Dismiss</button></div><p id="warning" class="warning" hidden></p>
 </section>
 <section class="card">
  <div class="row" style="justify-content:space-between"><h2>Available topics</h2><button id="refresh-topics" class="secondary" disabled>Refresh topics</button></div>
@@ -130,17 +131,63 @@
 </footer>
 <script>
 const $=id=>document.getElementById(id);
-let sending=false,stopRequestActive=false,lastStatus=null,topicRevision=null,topicNames=[],chosen=new Set(),recordingsKey=null,deletingName=null;
+let sending=false,localAction=null,stopRequestActive=false,lastStatus=null,topicRevision=null,topicNames=[],chosen=new Set(),recordingsKey=null,deletingName=null;
 const openedBags=new Set();
 const names={idle:'Ready to record',starting:'Starting · waiting for topic data',recording:'Recording',stopping:'Finishing the bag',unavailable:'Pi recorder unavailable',unknown:'Waiting for Pi status'};
 function bytes(n){if(n==null)return '—';const units=['B','KiB','MiB','GiB'];let i=0;while(n>=1024&&i<3){n/=1024;i++}return n.toFixed(i===3?2:i?1:0)+' '+units[i]}
 function time(n){if(n==null)return '—';const s=Math.floor(n);return [Math.floor(s/3600),Math.floor(s/60)%60,s%60].map(v=>String(v).padStart(2,'0')).join(':')}
 function duration(n){return n==null?'—':n.toFixed(1)+' s'}
 function count(n){return n==null?'—':n.toLocaleString()}
+function recordedRate(messages, seconds) {
+ if(!Number.isFinite(messages)||messages<0||!Number.isFinite(seconds)||seconds<=0)return '—';
+ const rate=messages/seconds;
+ return rate>0&&rate<.001?rate.toPrecision(2):Number(rate.toFixed(rate>=10?1:rate>=1?2:3)).toLocaleString();
+}
+function statusPresentation(d){
+ const s=d.status;
+ if(!d.radio_connected)return {kind:'offline',title:d.age_seconds==null?'Connecting to recorder…':'Recorder status outdated',detail:d.error||'Waiting for a fresh Pi reply.'};
+ if(d.synchronized===false)return {kind:'offline',title:'Synchronizing with Pi',detail:'Wait for radio synchronization before sending a command.'};
+ if(d.pending==='start'&&s.state==='idle')return {kind:'recording',title:'Preparing to record',detail:'Start sent · waiting for Pi acknowledgment.'};
+ if(d.pending==='stop'&&['starting','recording'].includes(s.state))return {kind:'stopping',title:'Stopping recording…',detail:'Stop sent · waiting for Pi acknowledgment.'};
+ if(s.state==='idle'&&!s.can_start)return {kind:'blocked',title:'Storage too low to start',detail:'Free up space on the Pi before starting a new recording.'};
+ if(s.state==='idle')return {kind:'ready',title:'Ready to record',detail:'Recorder is idle. Select topics below, then press Begin recording.'};
+ if(s.state==='starting')return {kind:'recording',title:'Preparing to record',detail:s.name||'Waiting for topic data.'};
+ if(s.state==='recording')return {kind:'recording',title:'Recording in progress',detail:s.name||'Recording selected topics.'};
+ if(s.state==='stopping')return {kind:'stopping',title:'Finishing the recording…',detail:'Saving the remaining messages to the Pi.'};
+ return {kind:'offline',title:'Recorder status unavailable',detail:'Check the recorder service on the Pi.'};
+}
+class CommandFeedback{
+ constructor(){this.local=null;this.commandKey=null;this.commandAt=0;this.dismissed=null;this.latest=null;this.jobs={};this.was={}}
+ observe(d,now=performance.now()){
+  this.latest=d.last_command;
+  for(const [name,loading,error] of [['topics',d.topics_loading,d.topics_error],['recordings',d.metadata_loading&&!d.metadata_name,d.recordings_error]]){if(this.was[name]&&!loading&&!error)this.jobs[name]=now;this.was[name]=Boolean(loading)}
+  const key=d.last_command?(d.last_command.id??JSON.stringify(d.last_command)):null;
+  if(key!==this.commandKey){this.commandKey=key;this.commandAt=now;this.local=null;this.dismissed=null}
+ }
+ recentJob(name,now=performance.now()){return this.jobs[name]!=null&&now-this.jobs[name]<1600}
+ begin(text){this.local={text,kind:'info'};this.dismissed=this.commandKey}
+ clear(){this.local=null}
+ fail(text){this.local={text,kind:'error'}}
+ dismiss(){this.local=null;this.dismissed=this.commandKey}
+ reading(d,now=performance.now()){
+  if(!d.radio_connected)return {text:d.error||'Waiting for a fresh Pi reply…',kind:'warning'};
+  if(d.synchronized===false)return {text:'Synchronizing with Pi over LoRa…',kind:'info'};
+  if(d.pending)return {text:`Sending ${d.pending} · waiting for Pi acknowledgment…`,kind:'info'};
+  if(this.local)return {...this.local,dismissible:this.local.kind==='error'};
+  const command=d.last_command;
+  const failed=command&&!['ok','accepted','already_idle'].includes(command.result);
+  if(command&&this.commandKey!==this.dismissed&&(failed||now-this.commandAt<6000))return {text:`${command.action==='start'?'Start':command.action==='stop'?'Stop':'Delete'}: ${command.message}`,kind:failed?'error':'success',dismissible:Boolean(failed)};
+  if(d.completion_pending)return {text:'Recording finished · fetching final bag details…',kind:'info'};
+  if(d.completed_recording)return {text:`${d.completed_recording.name} saved · ${count(d.completed_recording.messages)} messages`,kind:'success'};
+  if(d.topics_loading||d.metadata_loading)return {text:'Loading over LoRa…',kind:'info'};
+  return {text:d.status.state==='idle'&&!d.status.can_start?'Free up space on the Pi before starting.':'Ready for a command',kind:'info'};
+ }
+}
 class RecordingTimer{
- constructor(){this.sample=null;this.at=0;this.held=null}
+ constructor(){this.sample=null;this.at=0;this.held=null;this.finalEstimate=null}
  reading(now=performance.now()){
   const d=this.sample,s=d?.status;
+  if(s?.state==='idle'){const final=d.completed_recording,age=(d.completion_age_seconds??0)+Math.max(0,(now-this.at)/1000);if(final&&Number.isFinite(final.duration_seconds)&&age<10)return {seconds:final.duration_seconds,estimated:false,final:true};if(d.completion_pending&&Number.isFinite(this.finalEstimate))return {seconds:this.finalEstimate,estimated:true,pending:true}}
   if(!s||!Number.isFinite(s.elapsed_seconds))return {seconds:null,estimated:false};
   if(s.state!=='recording')return {seconds:s.elapsed_seconds,estimated:false};
   if(this.held!==null)return {seconds:this.held,estimated:true};
@@ -148,6 +195,8 @@ class RecordingTimer{
   return {seconds:s.elapsed_seconds+Math.min(age,d.fresh_seconds??15),estimated:true};
  }
  update(d,now=performance.now()){
+  if(this.sample?.status.name&&d.status.state==='idle'&&d.completion_pending)this.finalEstimate=this.reading(now).seconds;
+  if(d.status.state!=='idle')this.finalEstimate=null;
   const previous=this.sample?.status.name===d.status.name?this.reading(now).seconds:null;
   this.sample=d;this.at=now;
   const advance=d.status.state==='recording'&&d.radio_connected&&d.synchronized!==false&&d.pending!=='stop';
@@ -156,9 +205,11 @@ class RecordingTimer{
  pause(now=performance.now()){this.held=this.reading(now).seconds}
 }
 const recordingTimer=new RecordingTimer();
-function updateTimer(){const value=recordingTimer.reading();$('elapsed').textContent=time(value.seconds);$('elapsed-label').textContent=value.estimated?'Recorded time (estimated)':'Recorded time'}
+const feedback=new CommandFeedback();
+function updateTimer(){const value=recordingTimer.reading(),state=recordingTimer.sample?.status.state;$('elapsed').textContent=time(state==='starting'&&value.seconds==null?0:value.seconds);$('elapsed-label').textContent=value.final?'Bag duration':state==='starting'?'Preparing recorder':value.estimated?'Recording time (estimated)':'Recording time';$('timer').hidden=!['starting','recording','stopping'].includes(state)&&!value.final&&!value.pending;$('timer').classList.toggle('is-stopping',state==='stopping'||Boolean(value.final)||Boolean(value.pending))}
 function metadataReady(d){return !sending&&d.radio_connected&&d.synchronized!==false&&!d.pending&&!d.metadata_loading&&!d.topics_loading}
 function updateControls(d){
+ $('dismiss-notice').disabled=sending||!d.radio_connected;
  $('selection-count').textContent=`${chosen.size} selected`;
  $('start').disabled=sending||!d.can_start||d.topics_loading||chosen.size===0||topicRevision==='0000000000000000';
  $('stop').disabled=sending||!d.can_stop;
@@ -179,7 +230,8 @@ function renderTopics(d){
  }
  const received=d.topics_received_bytes||0,total=d.topics_total_bytes;
  $('topic-progress').textContent=d.topics_loading?(total?`Loading topic list over LoRa · ${Math.floor(received/total*100)}%`:'Discovering topics on the Pi…'):(d.topics_error||((d.topics||[]).length?`${d.topics.length} topics available`:topicRevision&&topicRevision!=='0000000000000000'?'No topics available':'Refresh to get the topic list over LoRa.'));
- $('refresh-topics').textContent=d.topics_loading?'Loading…':'Refresh topics';
+ $('refresh-topics').textContent=d.topics_loading?'Refreshing…':feedback.recentJob('topics')?'Topics updated ✓':'Refresh topics';
+ $('refresh-topics').classList.toggle('is-success',!d.topics_loading&&feedback.recentJob('topics'));
  $('refresh-topics').classList.toggle('is-busy',Boolean(d.topics_loading));
 }
 function textNode(tag,text,className){const node=document.createElement(tag);node.textContent=text;if(className)node.className=className;return node}
@@ -193,53 +245,55 @@ function renderRecordings(d){
    const meta=document.createElement('div');meta.className='recording-meta';
    for(const value of [started?started.replace('T',' '):'Start time unavailable',bytes(info?.s??size),duration(info?.d??seconds),`${count(info?.m??messages)} messages`])meta.append(textNode('span',value));article.append(meta);
    const actions=document.createElement('div');actions.className='recording-actions';
-   const view=textNode('button',openedBags.has(name)&&info?'Hide topics':'View topics','secondary');view.dataset.bagAction='view';view.dataset.name=name;
+   const view=textNode('button',openedBags.has(name)&&info?'Hide topics':'View topics','secondary');view.dataset.bagAction='view';view.dataset.name=name;view.setAttribute('aria-expanded',String(openedBags.has(name)&&Boolean(info)));
    const loading=d.metadata_loading&&d.metadata_name===name;if(loading){view.textContent='Loading topics…';view.classList.add('is-busy')}
    view.onclick=()=>{if(openedBags.has(name)&&info){openedBags.delete(name);recordingsKey=null;renderRecordings(lastStatus);updateControls(lastStatus)}else if(lastStatus.recording_info?.[name]){openedBags.add(name);recordingsKey=null;renderRecordings(lastStatus);updateControls(lastStatus)}else{openedBags.add(name);command('recording-info',{name})}};
-   const remove=textNode('button',d.pending==='delete'&&deletingName===name?'Deleting…':'Delete','stop');remove.dataset.bagAction='delete';remove.dataset.name=name;
+   const remove=textNode('button',d.pending==='delete'&&deletingName===name?'Deleting…':'Delete','stop');remove.classList.toggle('is-busy',d.pending==='delete'&&deletingName===name);remove.dataset.bagAction='delete';remove.dataset.name=name;
    remove.onclick=()=>{if(confirm(`Delete "${name}" and all its MCAP files from the Pi? This cannot be undone.`)){deletingName=name;command('delete',{name,revision:lastStatus.recordings_revision,confirm:true})}};
    actions.append(view,remove);article.append(actions);
    if(openedBags.has(name)&&info){
     const panel=document.createElement('div');panel.className='bag-topic-panel';panel.append(textNode('h3','Recorded topics'));const health=info.h||d.recordings_health?.[name];if(health){const note=textNode('p',health.message||health.brief,'health '+health.state);note.setAttribute('role','status');panel.append(note)}
     const wrap=document.createElement('div');wrap.className='bag-topic-table-wrap';const table=document.createElement('table');table.className='bag-topic-table';
-    const head=document.createElement('thead'),tr=document.createElement('tr');for(const label of ['Topic','Messages','Hz','Type'])tr.append(textNode('th',label));head.append(tr);table.append(head);
-    const body=document.createElement('tbody');for(const [topic,number,type] of info.topics){const line=document.createElement('tr');for(const value of [topic,count(number),info.d>0&&number!=null?(number/info.d).toFixed(1):'—',type])line.append(textNode('td',value));body.append(line)}table.append(body);wrap.append(table);panel.append(wrap);if(!info.topics.length)panel.append(textNode('p','No topics recorded.','muted'));article.append(panel);
+    const head=document.createElement('thead'),tr=document.createElement('tr');for(const label of ['Topic','Messages','Avg. recorded Hz','ROS type'])tr.append(textNode('th',label));head.append(tr);table.append(head);
+    const body=document.createElement('tbody');for(const [topic,number,type] of info.topics){const line=document.createElement('tr');for(const value of [topic,count(number),recordedRate(number,info.d),type])line.append(textNode('td',value));body.append(line)}table.append(body);wrap.append(table);panel.append(wrap);if(!info.topics.length)panel.append(textNode('p','No topics recorded.','muted'));article.append(panel);
    }
    $('recordings').append(article);
   }
   if(d.recordings_loaded&&!(d.recordings||[]).length)$('recordings').append(textNode('p','No recordings on this page.','muted'));
  }
- $('recordings-progress').textContent=d.metadata_loading?`${d.metadata_name?'Loading topic details':'Loading recordings'} over LoRa · ${d.metadata_progress||0}%`:d.recordings_error||(!d.recording_management?'Recording management needs an updated Pi LoRa agent.':d.recordings_loaded?`${d.recordings_total} recordings on the Pi · Refresh to update this list.`:'Refresh to load recordings over LoRa.');
- $('refresh-recordings').textContent=d.metadata_loading&&!d.metadata_name?'Loading…':'Refresh recordings';$('refresh-recordings').classList.toggle('is-busy',Boolean(d.metadata_loading&&!d.metadata_name));
+ $('recordings-progress').textContent=d.metadata_loading?`${d.metadata_name?'Loading topic details':'Loading recordings'} over LoRa · ${d.metadata_progress||0}%`:d.recordings_error||(!d.recording_management?'Recording management needs an updated Pi LoRa agent.':d.recordings_loaded?`${d.recordings_total} ${d.recordings_total===1?'recording':'recordings'} on the Pi · Refresh to update this list.`:'Refresh to load recordings over LoRa.');
+ $('refresh-recordings').textContent=d.metadata_loading&&!d.metadata_name?'Refreshing…':feedback.recentJob('recordings')?'List updated ✓':'Refresh recordings';$('refresh-recordings').classList.toggle('is-success',!d.metadata_loading&&feedback.recentJob('recordings'));$('refresh-recordings').classList.toggle('is-busy',Boolean(d.metadata_loading&&!d.metadata_name));
  $('pager').hidden=!d.recordings_loaded||(!(d.recordings_offset||0)&&d.recordings_next==null);
  $('page-description').textContent=`Page ${Math.floor((d.recordings_offset||0)/5)+1}`;
 }
 function render(d){
- recordingTimer.update(d);if(stopRequestActive)recordingTimer.pause();updateTimer();lastStatus=d;
+ feedback.observe(d);recordingTimer.update(d);if(stopRequestActive)recordingTimer.pause();updateTimer();lastStatus=d;
  const s=d.status,live=d.radio_connected;
  $('link').textContent=live?'Radio connected':d.age_seconds==null?'Waiting for radio':'Radio contact lost';$('link').className='badge '+(live?'good':'bad');
  $('age').textContent=d.age_seconds==null?'No update yet':`Last update ${Math.floor(d.age_seconds)} s ago`;
- $('state').textContent=(names[s.state]||'Unknown state')+(!live&&d.age_seconds!=null?' · outdated':'');
- $('status').className='recorder-status '+(!live?'is-offline':s.state==='idle'?'is-ready':s.state==='recording'?'is-recording':s.state==='stopping'?'is-stopping':'');
- $('name').textContent=s.name||'Select topics below, then press Begin recording.';
+ const view=statusPresentation(d);$('state').textContent=view.title;$('status').className='recorder-status is-'+view.kind;$('name').textContent=view.detail;
  $('bag').textContent=bytes(s.bag_bytes);$('free').textContent=bytes(s.free_bytes);$('total').textContent=s.total_bytes==null?'Storage unavailable':`of ${bytes(s.total_bytes)} total`;
- $('topics').textContent=s.name?`${s.topic_count??'—'} topics in current recording`:'No active recording';
- $('timer').hidden=!['starting','recording','stopping'].includes(s.state);$('timer').classList.toggle('is-stopping',s.state==='stopping');
+ const available=Number.isFinite(s.free_bytes)&&Number.isFinite(s.total_bytes)&&s.total_bytes>0,critical=available&&!s.can_start;
+ $('free-space-card').classList.toggle('is-warning',available&&s.storage_warning&&!critical);$('free-space-card').classList.toggle('is-critical',critical);
+ $('storage-meter').hidden=!available;if(available){$('storage-meter').value=Math.max(0,Math.min(100,100*s.free_bytes/s.total_bytes));$('storage-meter').setAttribute('aria-valuetext',`${bytes(s.free_bytes)} free of ${bytes(s.total_bytes)}`)}
+ $('storage-notice').hidden=!(available&&(critical||s.storage_warning));$('storage-notice').textContent=critical?'Storage too low to record':'Pi storage is low';
+ const active=Number.isFinite(s.bag_bytes);$('bag-size-card').classList.toggle('is-active',active);
+ $('topics').textContent=active?`${s.segment_count==null?'':`${s.segment_count} MCAP ${s.segment_count===1?'file':'files'} · `}${s.topic_count??'—'} topics${s.state==='stopping'?' · Finalizing…':''}`:'No active recording';
  $('cpu-temp').textContent=`CPU temperature: ${s.temperature_c==null?'—':s.temperature_c.toFixed(1)+' °C'}`;
  renderTopics(d);renderRecordings(d);updateControls(d);
- $('start').textContent=d.pending==='start'?'Starting…':'Begin recording';$('stop').textContent=d.pending==='stop'?'Stopping…':'Stop recording';
- const actionName=action=>action==='start'?'Start':action==='stop'?'Stop':'Delete';
- $('notice').textContent=d.pending?`Sending ${d.pending} · waiting for Pi acknowledgment…`:!live?(d.error||'Waiting for the first authenticated reply…'):d.synchronized===false?'Synchronizing with Pi over LoRa…':(d.last_command?`${actionName(d.last_command.action)}: ${d.last_command.message}`:'Ready for a command');
- $('notice').className=d.last_command?.result==='unknown'||!live?'warning':'';
- const warnings=[];if(s.storage_warning)warnings.push('Pi storage is low');if(s.last_recording_error)warnings.push('Previous recording reported an error; inspect it on the Pi');else if(s.last_recording_warning)warnings.push('Previous recording reported a warning; inspect it on the Pi');$('warning').hidden=!warnings.length;$('warning').textContent=warnings.join(' · ');
+ const notice=feedback.reading(d);$('notice').textContent=notice.text;$('notice').className=notice.kind==='error'?'error':notice.kind==='warning'?'warning':'';$('dismiss-notice').hidden=!notice.dismissible;
+ const recent=d.last_command&&performance.now()-feedback.commandAt<1600&&d.last_command.result==='accepted'&&feedback.commandKey!==feedback.dismissed;
+ for(const action of ['start','stop']){const button=$(action),busy=d.pending===action||localAction===action,success=recent&&d.last_command.action===action;button.classList.toggle('is-busy',busy);button.classList.toggle('is-success',Boolean(success&&!busy));button.textContent=busy?(action==='start'?'Starting…':'Stopping…'):success?(action==='start'?'Started ✓':'Stop accepted ✓'):(action==='start'?'Begin recording':'Stop recording')}
+ const warnings=[];if(s.storage_warning&&!available)warnings.push('Pi storage is low');if(s.last_recording_error)warnings.push('Previous recording reported an error; inspect it on the Pi');else if(s.last_recording_warning)warnings.push('Previous recording reported a warning; inspect it on the Pi');$('warning').hidden=!warnings.length;$('warning').textContent=warnings.join(' · ');
 }
 async function refresh(){try{const r=await fetch('/api/status',{signal:AbortSignal.timeout(3000)});if(!r.ok)throw Error('Status unavailable');render(await r.json());$('browser-error').textContent=''}catch(e){recordingTimer.pause();updateTimer();document.querySelectorAll('button').forEach(button=>button.disabled=true);$('link').textContent='Local controller unavailable';$('link').className='badge bad';$('state').textContent='Status outdated';$('age').textContent='Updates unavailable';$('browser-error').textContent='Cannot reach this laptop’s LoRa controller. Keep its terminal running.'}finally{setTimeout(refresh,1000)}}
 async function command(action,extra={}){
- if(action==='start'&&![$('split-size'),$('split-duration')].every(input=>input.reportValidity()))return;
- sending=true;if(action==='stop'){stopRequestActive=true;recordingTimer.pause();updateTimer()}if(lastStatus)updateControls(lastStatus);
+ if(action==='start'&&![$('split-size'),$('split-duration')].every(input=>input.reportValidity())){feedback.fail('Enter a whole positive MiB or seconds value, or leave the split limit blank.');render(lastStatus);return;}
+ sending=true;localAction=action;feedback.begin(`Sending ${action}…`);if(action==='stop'){stopRequestActive=true;recordingTimer.pause();updateTimer()}if(lastStatus)updateControls(lastStatus);
  const body=action==='start'?{mode:'selected',indices:topicNames.map((name,index)=>chosen.has(name)?index:-1).filter(index=>index>=0),revision:topicRevision,max_bag_size_mib:$('split-size').value===''?null:$('split-size').valueAsNumber,max_bag_duration_seconds:$('split-duration').value===''?null:$('split-duration').valueAsNumber}:extra;
  $('notice').textContent=`Sending ${action}…`;
- try{const r=await fetch('/api/'+action,{method:'POST',headers:{'X-LoRa-Control':'__CONTROL_TOKEN__','Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(3000)});const d=await r.json();if(!r.ok)throw Error(d.error||'Request rejected');$('notice').textContent=['start','stop','delete'].includes(action)?`Sending ${action} · waiting for Pi acknowledgment…`:'Loading over LoRa…'}catch(e){$('notice').textContent=e.message+'; check updated status before retrying'}finally{sending=false;if(action==='stop')stopRequestActive=false}
+ try{const r=await fetch('/api/'+action,{method:'POST',headers:{'X-LoRa-Control':'__CONTROL_TOKEN__','Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(3000)});const d=await r.json();if(!r.ok)throw Error(d.error||'Request rejected');feedback.clear();$('notice').textContent=['start','stop','delete'].includes(action)?`Sending ${action} · waiting for Pi acknowledgment…`:'Loading over LoRa…'}catch(e){feedback.fail(e.message+'; check updated status before retrying');$('notice').textContent=e.message;$('notice').className='error';$('dismiss-notice').hidden=false}finally{sending=false;localAction=null;if(action==='stop')stopRequestActive=false}
 }
+$('dismiss-notice').onclick=()=>{feedback.dismiss();if(lastStatus)render(lastStatus)};
 $('start').onclick=()=>command('start');$('stop').onclick=()=>command('stop');$('refresh-topics').onclick=()=>command('topics');$('refresh-recordings').onclick=()=>command('recordings');$('previous-recordings').onclick=()=>command('recordings',{offset:Math.max(0,(lastStatus.recordings_offset||0)-5)});$('next-recordings').onclick=()=>command('recordings',{offset:lastStatus.recordings_next});setInterval(updateTimer,100);refresh();
 </script></body></html>
