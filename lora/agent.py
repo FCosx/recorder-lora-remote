@@ -17,7 +17,7 @@ from urllib.request import ProxyHandler, Request as HTTPRequest, build_opener
 from .common import SerialLink
 from .protocol import (
     CATALOG_REQUEST, CATALOG_RESPONSE, COMMAND_LIFETIME, MAX_PAYLOAD, RESPONSE,
-    SYNC_RESPONSE, UNKNOWN32, UNKNOWN64, ZERO, Op, Request, Response, Result, State, recording_token,
+    RECORDING_NAME, SYNC_RESPONSE, UNKNOWN32, UNKNOWN64, ZERO, Op, Request, Response, Result, State, recording_token,
 )
 
 
@@ -67,6 +67,19 @@ class RecorderAPI:
 
     def stop(self, name):
         return self.request("/api/stop", {"expected_name": name, "wait": False}, timeout=5)
+
+    def recordings(self, offset):
+        return self.request(f"/api/recording-summaries?offset={offset}", timeout=5)
+
+    def recording_info(self, name):
+        if not RECORDING_NAME.fullmatch(name):
+            raise ValueError("Invalid recording name")
+        return self.request(f"/api/recordings/{name}/info?compact=1", timeout=5)
+
+    def delete(self, name):
+        if not RECORDING_NAME.fullmatch(name):
+            raise ValueError("Invalid recording name")
+        return self.request(f"/api/recordings/{name}/delete", {"name": name}, timeout=5)
 
 
 class Journal:
@@ -124,6 +137,45 @@ class Agent:
         self.temperature_path = Path(temperature_path)
         self.catalog = None
         self.catalog_request_id = None
+        self.recording_transfers = {}
+
+    def recording_response(self, request):
+        if len(request.data) < CATALOG_REQUEST.size:
+            return self.snapshot(request, Result.INVALID_RECORDING)
+        revision, offset = CATALOG_REQUEST.unpack(request.data[:CATALOG_REQUEST.size])
+        selector = request.data[CATALOG_REQUEST.size:]
+        cached = self.recording_transfers.get(request.op)
+        if revision == ZERO and offset == 0:
+            if cached is None or cached["request_id"] != request.number:
+                if request.op == Op.RECORDINGS:
+                    if len(selector) != 2:
+                        return self.snapshot(request, Result.INVALID_RECORDING)
+                    page = self.api.recordings(int.from_bytes(selector, "big"))
+                    rows = [row for row in page["recordings"] if RECORDING_NAME.fullmatch(row["name"])]
+                    value = {"r": [[row["name"], row["bytes"], row["started_at"], row["duration_seconds"],
+                                     row["total_messages"]] for row in rows],
+                             "t": page["total"], "n": page["next_offset"]}
+                else:
+                    name = selector.decode("ascii")
+                    if not RECORDING_NAME.fullmatch(name):
+                        return self.snapshot(request, Result.INVALID_RECORDING)
+                    info = self.api.recording_info(name)
+                    value = {"s": info["bag_size_bytes"], "d": info["duration_seconds"], "m": info["total_messages"],
+                             "topics": [[topic["name"], topic["messages"], topic["type"]] for topic in info["topics"]]}
+                raw = json.dumps(value, separators=(",", ":")).encode()
+                packed = zlib.compress(raw)
+                if len(raw) > 30000 or len(packed) > 30000:
+                    return self.snapshot(request, Result.TOO_LARGE)
+                cached = {"request_id": request.number, "revision": secrets.token_bytes(8),
+                          "selector": selector, "packed": packed, "value": value, "created": self.clock()}
+                self.recording_transfers[request.op] = cached
+        if (cached is None or cached["selector"] != selector or revision not in (ZERO, cached["revision"])
+                or self.clock() - cached["created"] > 3600 or offset >= len(cached["packed"])):
+            return self.snapshot(request, Result.INVALID_RECORDING)
+        response = self.snapshot(request, Result.OK)
+        room = MAX_PAYLOAD - RESPONSE.size - 1 - len(response.name.encode("ascii")[:48]) - CATALOG_RESPONSE.size
+        return replace(response, data=CATALOG_RESPONSE.pack(cached["revision"], offset, len(cached["packed"]))
+                       + cached["packed"][offset:offset + room])
 
     def discover(self):
         topics = list(dict.fromkeys(item["name"] for item in self.api.topics()))
@@ -201,6 +253,17 @@ class Agent:
             if not self.fresh(request):
                 return Result.EXPIRED
             self.api.stop(status["name"])
+        elif request.op == Op.DELETE:
+            if status["state"] != "idle":
+                return Result.BUSY
+            cached = self.recording_transfers.get(Op.RECORDINGS)
+            if (len(request.data) != 16 or cached is None or request.data[:8] != cached["revision"]
+                    or self.clock() - cached["created"] > 3600):
+                return Result.INVALID_RECORDING
+            name = next((row[0] for row in cached["value"]["r"] if recording_token(row[0]) == request.data[8:]), None)
+            if name is None or not self.fresh(request):
+                return Result.INVALID_RECORDING
+            self.api.delete(name)
         return Result.ACCEPTED
 
     def snapshot(self, request, result):
@@ -212,7 +275,7 @@ class Agent:
         except Exception:
             status = {}
             state = State.UNAVAILABLE
-        flags = int(bool(status.get("storage_warning"))) | (int(bool(status.get("can_start"))) << 1)
+        flags = 16 | int(bool(status.get("storage_warning"))) | (int(bool(status.get("can_start"))) << 1)
         health = status.get("last_result") or {}
         flags |= int(health.get("state") == "warning") << 2
         flags |= int(health.get("state") == "error") << 3
@@ -245,6 +308,14 @@ class Agent:
                 return self.topics_response(request)
             except Exception:
                 LOG.exception("Topic discovery failed")
+                return self.snapshot(request, Result.API_ERROR)
+        if request.op in (Op.RECORDINGS, Op.BAG_INFO):
+            try:
+                return self.recording_response(request)
+            except APIRejected:
+                return self.snapshot(request, Result.NOT_FOUND)
+            except Exception:
+                LOG.exception("Recording metadata failed")
                 return self.snapshot(request, Result.API_ERROR)
         result = Result.OK
         if request.op != Op.STATUS:

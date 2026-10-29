@@ -7,7 +7,10 @@ authenticates commands and telemetry, but does not encrypt their contents.
 import base64
 import hashlib
 import hmac
+import json
+import re
 import struct
+import zlib
 from dataclasses import dataclass
 from enum import IntEnum
 
@@ -26,6 +29,7 @@ MAX_PAYLOAD = ((MAX_FRAME - len(PREFIX) - 1) // 4) * 3 - TAG_BYTES
 CATALOG_REQUEST = struct.Struct("!8sH")
 CATALOG_RESPONSE = struct.Struct("!8sHH")
 SYNC_RESPONSE = struct.Struct("!16sQ")
+RECORDING_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}\Z")
 
 
 class Op(IntEnum):
@@ -35,6 +39,9 @@ class Op(IntEnum):
     TOPICS = 3
     START_SELECTED = 4
     SYNC = 5
+    RECORDINGS = 6
+    BAG_INFO = 7
+    DELETE = 8
 
 
 class State(IntEnum):
@@ -62,6 +69,9 @@ class Result(IntEnum):
     TOO_MANY_TOPICS = 13
     INVALID_TOPICS = 14
     CATALOG_CHANGED = 15
+    INVALID_RECORDING = 16
+    NOT_FOUND = 17
+    TOO_LARGE = 18
 
 
 RESULT_TEXT = {
@@ -81,7 +91,40 @@ RESULT_TEXT = {
     Result.TOO_MANY_TOPICS: "More than 100 topics; this recorder supports up to 100",
     Result.INVALID_TOPICS: "Topic discovery returned unsupported topic names",
     Result.CATALOG_CHANGED: "Topic list expired or changed; refresh it before starting",
+    Result.INVALID_RECORDING: "Recording selection is invalid or outdated; refresh recordings",
+    Result.NOT_FOUND: "Recording is no longer available; refresh recordings",
+    Result.TOO_LARGE: "Recording details are too large for the radio link",
 }
+
+
+class JSONTransfer:
+    """Bounded, ordered compressed JSON transfer shared by recording pages/details."""
+    def __init__(self):
+        self.revision = ZERO
+        self.data = bytearray()
+        self.total = None
+
+    def request(self):
+        return CATALOG_REQUEST.pack(self.revision, len(self.data))
+
+    def accept(self, data):
+        if len(data) <= CATALOG_RESPONSE.size:
+            raise ValueError("Incomplete recording reply")
+        revision, offset, total = CATALOG_RESPONSE.unpack(data[:CATALOG_RESPONSE.size])
+        if (not 0 < total <= 30000 or offset != len(self.data)
+                or self.revision not in (ZERO, revision) or self.total not in (None, total)):
+            raise ValueError("Recording chunks changed; refresh again")
+        self.revision, self.total = revision, total
+        self.data.extend(data[CATALOG_RESPONSE.size:])
+        if len(self.data) > total:
+            raise ValueError("Oversized recording reply")
+        if len(self.data) < total:
+            return None
+        inflater = zlib.decompressobj()
+        raw = inflater.decompress(self.data, 30001)
+        if len(raw) > 30000 or not inflater.eof or inflater.unused_data:
+            raise ValueError("Invalid compressed recording data")
+        return json.loads(raw)
 
 
 def recording_token(name):

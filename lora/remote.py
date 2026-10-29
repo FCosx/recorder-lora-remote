@@ -2,6 +2,7 @@
 
 import json
 import logging
+import math
 import queue
 import secrets
 import sqlite3
@@ -13,7 +14,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from .common import SerialLink
-from .protocol import CATALOG_REQUEST, CATALOG_RESPONSE, SYNC_RESPONSE, ZERO, Op, Request, Response, Result, RESULT_TEXT, State
+from .protocol import CATALOG_REQUEST, CATALOG_RESPONSE, JSONTransfer, RECORDING_NAME, SYNC_RESPONSE, ZERO, Op, Request, Response, Result, RESULT_TEXT, State, recording_token
 
 
 LOG = logging.getLogger(__name__)
@@ -65,6 +66,16 @@ class Remote:
         self.catalog_revision = ZERO
         self.topic_transfer = None
         self.topic_error = None
+        self.recordings = []
+        self.recordings_revision = ZERO
+        self.recordings_total = 0
+        self.recordings_offset = 0
+        self.recordings_next = None
+        self.recordings_loaded = False
+        self.recording_info = {}
+        self.data_transfer = None
+        self.recordings_error = None
+        self.delete_target = None
 
     def status(self):
         with self.lock:
@@ -82,6 +93,16 @@ class Remote:
                 "topics_received_bytes": len(self.topic_transfer["data"]) if self.topic_transfer else 0,
                 "topics_total_bytes": self.topic_transfer["total"] if self.topic_transfer else None,
                 "topics_error": self.topic_error,
+                "recording_management": bool(self.latest and self.latest.flags & 16),
+                "recordings": self.recordings, "recordings_revision": self.recordings_revision.hex(),
+                "recordings_total": self.recordings_total, "recordings_next": self.recordings_next,
+                "recordings_offset": self.recordings_offset,
+                "recordings_loaded": self.recordings_loaded, "recording_info": self.recording_info,
+                "recordings_error": self.recordings_error,
+                "metadata_loading": self.data_transfer is not None,
+                "metadata_name": self.data_transfer["name"] if self.data_transfer else None,
+                "metadata_progress": (int(100 * len(self.data_transfer["transfer"].data) / self.data_transfer["transfer"].total)
+                                      if self.data_transfer and self.data_transfer["transfer"].total else 0),
                 "can_start": online and self.synchronized and not self.needs_refresh and not self.pending
                              and data["state"] == "idle" and data.get("can_start", False),
                 "can_stop": online and self.synchronized and not self.needs_refresh and not self.pending
@@ -105,11 +126,91 @@ class Remote:
             self.pending = "start" if op in (Op.START, Op.START_SELECTED) else "stop"
             self.queue.put_nowait((op, self.latest, data))
 
+    def check_metadata_ready(self):
+        status = self.status()
+        if (not status["radio_connected"] or not self.synchronized or self.needs_refresh
+                or self.pending or self.data_transfer is not None or self.topic_transfer is not None):
+            raise ValueError("Wait for fresh radio status and the current request to finish")
+        if not status["recording_management"]:
+            raise ValueError("Update the Pi LoRa agent before using recording management")
+
+    def refresh_recordings(self, offset=0):
+        with self.lock:
+            self.check_metadata_ready()
+            if type(offset) is not int or not 0 <= offset <= 65535:
+                raise ValueError("Invalid recording page")
+            self.data_transfer = {"op": Op.RECORDINGS, "selector": offset.to_bytes(2, "big"),
+                                  "name": None, "transfer": JSONTransfer()}
+            self.recordings_error = None
+
+    def fetch_recording(self, name):
+        with self.lock:
+            self.check_metadata_ready()
+            if not isinstance(name, str) or not RECORDING_NAME.fullmatch(name) or not any(row[0] == name for row in self.recordings):
+                raise ValueError("Refresh recordings and choose one from the list")
+            self.data_transfer = {"op": Op.BAG_INFO, "selector": name.encode("ascii"),
+                                  "name": name, "transfer": JSONTransfer()}
+            self.recordings_error = None
+
+    def delete_recording(self, name, revision):
+        with self.lock:
+            self.check_metadata_ready()
+            if (self.latest.state != State.IDLE or not isinstance(name, str)
+                    or revision != self.recordings_revision.hex() or self.recordings_revision == ZERO
+                    or not any(row[0] == name for row in self.recordings)):
+                raise ValueError("Stop recording, refresh recordings and select the bag to delete")
+            self.pending, self.delete_target = "delete", name
+            self.queue.put_nowait((Op.DELETE, self.latest, self.recordings_revision + recording_token(name)))
+
+    def accept_metadata(self, response):
+        transfer = self.data_transfer
+        if transfer is None:
+            return
+        try:
+            if response.result != Result.OK:
+                raise ValueError(RESULT_TEXT[response.result])
+            value = transfer["transfer"].accept(response.data)
+            if value is None:
+                return
+            def number(value):
+                return value is None or (type(value) in (int, float) and math.isfinite(value) and value >= 0)
+            if not isinstance(value, dict):
+                raise ValueError("Invalid recording metadata")
+            if transfer["op"] == Op.RECORDINGS:
+                rows = value.get("r")
+                if (not isinstance(rows, list) or len(rows) > 5 or type(value.get("t")) is not int or value["t"] < 0
+                        or (value.get("n") is not None and (type(value["n"]) is not int or not 0 <= value["n"] <= 65535))
+                        or any(not isinstance(row, list) or len(row) != 5 or not isinstance(row[0], str)
+                               or not RECORDING_NAME.fullmatch(row[0]) or not number(row[1])
+                               or (row[2] is not None and (not isinstance(row[2], str) or len(row[2]) > 40))
+                               or not number(row[3]) or not number(row[4]) for row in rows)
+                        or len({row[0] for row in rows}) != len(rows)):
+                    raise ValueError("Invalid recording list")
+                self.recordings = rows
+                self.recordings_revision = transfer["transfer"].revision
+                self.recordings_total, self.recordings_next = value["t"], value["n"]
+                self.recordings_offset = int.from_bytes(transfer["selector"], "big")
+                self.recordings_loaded = True
+                self.recording_info = {name: info for name, info in self.recording_info.items() if any(row[0] == name for row in rows)}
+            else:
+                topics = value.get("topics")
+                if (not all(number(value.get(field)) for field in ("s", "d", "m"))
+                        or not isinstance(topics, list) or len(topics) > 100
+                        or any(not isinstance(topic, list) or len(topic) != 3
+                               or not isinstance(topic[0], str) or len(topic[0]) > 255 or not topic[0].startswith("/")
+                               or not number(topic[1]) or not isinstance(topic[2], str) or len(topic[2]) > 255 for topic in topics)):
+                    raise ValueError("Invalid recorded topic details")
+                self.recording_info[transfer["name"]] = value
+            self.data_transfer = None
+        except (ValueError, zlib.error, KeyError, TypeError) as error:
+            self.recordings_error = str(error)
+            self.data_transfer = None
+
     def refresh_topics(self):
         with self.lock:
             if not self.status()["radio_connected"] or not self.synchronized or self.pending:
                 raise ValueError("Wait for radio status and any pending recording command")
-            if self.topic_transfer is not None:
+            if self.topic_transfer is not None or self.data_transfer is not None:
                 raise ValueError("A topic refresh is already running")
             self.catalog = []
             self.catalog_revision = ZERO
@@ -192,6 +293,9 @@ class Remote:
                                 op, snapshot = Op.TOPICS, None
                                 transfer = self.topic_transfer
                                 data = CATALOG_REQUEST.pack(transfer["revision"], len(transfer["data"]))
+                            elif self.data_transfer is not None:
+                                op, snapshot = self.data_transfer["op"], None
+                                data = self.data_transfer["transfer"].request() + self.data_transfer["selector"]
                             else:
                                 continue
                 request = Request(op, counter.next(), **({
@@ -229,12 +333,24 @@ class Remote:
                         else:
                             self.topic_error = "No topic-list reply; refresh when the radio link is available"
                             self.topic_transfer = None
+                    elif op in (Op.RECORDINGS, Op.BAG_INFO):
+                        if response is not None:
+                            self.accept_metadata(response)
+                        else:
+                            self.recordings_error = "No recording reply; reconnect and refresh recordings"
+                            self.data_transfer = None
                     elif op not in (Op.STATUS, Op.SYNC):
                         result = response.result if response else Result.UNKNOWN
-                        self.command = {"action": "start" if op in (Op.START, Op.START_SELECTED) else "stop", "result": result.name.lower(),
+                        action = "delete" if op == Op.DELETE else "start" if op in (Op.START, Op.START_SELECTED) else "stop"
+                        self.command = {"action": action, "name": self.delete_target if op == Op.DELETE else None, "result": result.name.lower(),
                                         "message": RESULT_TEXT[result]}
                         self.pending = None
                         self.needs_refresh = response is None
+                        if op == Op.DELETE and result == Result.ACCEPTED:
+                            self.recording_info.pop(self.delete_target, None)
+                            self.recordings = [row for row in self.recordings if row[0] != self.delete_target]
+                            self.recordings_total = max(0, self.recordings_total - 1)
+                            self.data_transfer = {"op": Op.RECORDINGS, "selector": bytes(2), "name": None, "transfer": JSONTransfer()}
                         if result in (Result.OLD_COMMAND, Result.ID_CONFLICT):
                             self.synchronized = False
                             self.needs_refresh = True
@@ -242,7 +358,7 @@ class Remote:
                 # Wait after each reply; commands take priority over the next status poll.
                 if op == Op.SYNC and response is None:
                     self.stopped.wait(1)
-                if op != Op.TOPICS:
+                if op not in (Op.TOPICS, Op.RECORDINGS, Op.BAG_INFO):
                     next_poll = time.monotonic() + (0.5 if op != Op.STATUS else self.poll_seconds)
                 elif self.stopped.wait(0.3):
                     break
@@ -302,7 +418,7 @@ def make_handler(remote, port):
             if (not self.valid_host() or self.headers.get("X-LoRa-Control") != token
                     or (origin is not None and origin != "http://" + self.headers.get("Host", ""))):
                 return self.reply(403, {"error": "Open the local control page before sending commands"})
-            if self.path not in ("/api/start", "/api/stop", "/api/topics"):
+            if self.path not in ("/api/start", "/api/stop", "/api/topics", "/api/recordings", "/api/recording-info", "/api/delete"):
                 return self.reply(404, {"error": "Unknown endpoint"})
             try:
                 length = int(self.headers.get("Content-Length", "0"))
@@ -313,12 +429,20 @@ def make_handler(remote, port):
                     raise ValueError("Expected an object")
                 if self.path == "/api/topics":
                     remote.refresh_topics()
-                elif self.path == "/api/start" and body.get("mode") == "selected":
+                elif self.path == "/api/recordings":
+                    remote.refresh_recordings(body.get("offset", 0))
+                elif self.path == "/api/recording-info":
+                    remote.fetch_recording(body.get("name"))
+                elif self.path == "/api/delete":
+                    if body.get("confirm") is not True:
+                        raise ValueError("Confirm deletion of this recording first")
+                    remote.delete_recording(body.get("name"), body.get("revision"))
+                elif self.path == "/api/start":
+                    if body.get("mode", "selected") != "selected":
+                        raise ValueError("Select the topics to record")
                     remote.submit(Op.START_SELECTED, body.get("indices"), body.get("revision"))
                 else:
-                    if self.path == "/api/start" and body.get("mode", "all") != "all":
-                        raise ValueError("Choose all or selected topics")
-                    remote.submit(Op.START if self.path == "/api/start" else Op.STOP)
+                    remote.submit(Op.STOP)
                 self.reply(202, {"queued": True})
             except ValueError as error:
                 self.reply(409, {"error": str(error)})
