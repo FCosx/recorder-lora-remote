@@ -1,4 +1,4 @@
-"""Keep the stable polling default and exercise opt-in trial startup."""
+"""Keep the accepted one-second default and exercise the two-second fallback."""
 
 import contextlib
 import io
@@ -13,12 +13,12 @@ from tools.lora_recorder import main
 
 
 class PollingTests(unittest.TestCase):
-    def test_cli_default_trial_and_explicit_rollback(self):
+    def test_cli_default_and_explicit_intervals(self):
         with tempfile.TemporaryDirectory() as directory:
             config = Path(directory) / 'remote.json'
             write_private(config, {'version': 1, 'role': 'remote',
                                   'key': bytes(32).hex(), 'state_file': 'state.sqlite3'})
-            for options, expected in (([], 2), (['--poll-seconds', '1'], 1),
+            for options, expected in (([], 1), (['--poll-seconds', '1'], 1),
                                       (['--poll-seconds', '2'], 2)):
                 with self.subTest(options=options), \
                      patch('sys.argv', ['lora_recorder.py', 'remote', '--config', str(config)] + options), \

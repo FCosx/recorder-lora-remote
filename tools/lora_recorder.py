@@ -53,8 +53,8 @@ def main():
         command.add_argument("--port", help="Serial port; auto-detects when exactly one CH340 is connected")
         if role == "remote":
             command.add_argument("--web-port", type=int, default=8081)
-            command.add_argument("--poll-seconds", type=int, choices=(1, 2), default=2,
-                                 help="Wait after each status reply: 2 is stable; 1 is a trial")
+            command.add_argument("--poll-seconds", type=int, choices=(1, 2), default=1,
+                                 help="Wait after each status reply: 1 is default; 2 reduces radio traffic")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     if args.command == "pair":

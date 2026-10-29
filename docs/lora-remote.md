@@ -47,22 +47,20 @@ python3 -B ~/robot-recorder/tools/lora_recorder.py remote
 
 安装包含 pySerial 3.5，许可见 [第三方说明](../THIRD_PARTY_NOTICES.md)。
 
-## 可选：一秒状态轮询试用
+## 状态更新间隔
 
-默认仍为两秒。试用版本允许缩短为每次状态回复后等待一秒；无线传输和重试还需额外时间，并不保证每秒收到一次状态。更频繁的状态请求可能延长话题列表、录制列表和详情的加载时间。不会改变以太网/Zenoh 的传感器数据通道或录制参数。
+默认在每次状态回复后等待一秒，再发送下一次状态请求；无线传输和重试还需额外时间，并不保证每秒收到一次状态。按前面的普通启动命令即可使用，无需额外参数。页面显示 `1 s polling`，计时器仍在本机平滑递增。
 
-先按 Ctrl+C 停止旧控制程序，再启动试用模式：
-
-```bash
-python3 -B ~/robot-recorder/tools/lora_recorder.py remote --poll-seconds 1
-```
-
-刷新 `http://127.0.0.1:8081`，页面显示 `1 s polling trial`。对比状态新鲜度、开始/停止确认和列表加载时间；远距离表现必须在实际位置验证。每次只运行一个控制端。
-
-恢复两秒：按 Ctrl+C，再运行下面命令并刷新页面。无需重新配对或重启树莓派。
+若远距离链路不稳定，或希望减少状态流量、为话题和录制列表留出更多无线容量，可按 Ctrl+C 停止控制程序，再改用两秒：
 
 ```bash
 python3 -B ~/robot-recorder/tools/lora_recorder.py remote --poll-seconds 2
 ```
 
-一秒为临时试验，尚未决定取代两秒默认值。稳定版本 v0.4.0 保留，可重新安装回退；现有配对和命令编号保留。
+恢复默认一秒：按 Ctrl+C，再运行普通启动命令并刷新页面。每次只运行一个控制端；无需重新配对或重启树莓派。
+
+```bash
+python3 -B ~/robot-recorder/tools/lora_recorder.py remote
+```
+
+此设置只影响 LoRa 状态轮询，不改变以太网/Zenoh 数据通道或录制参数。两秒版本 v0.4.0 仍保留供完整回退；远距离性能需在实际位置验证。

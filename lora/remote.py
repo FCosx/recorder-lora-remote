@@ -54,7 +54,7 @@ class Counter:
 
 
 class Remote:
-    def __init__(self, key, state_file, port, poll_seconds=2, timeout=8, attempts=3):
+    def __init__(self, key, state_file, port, poll_seconds=1, timeout=8, attempts=3):
         self.key = key
         self.state_file = state_file
         self.link = SerialLink(port)
@@ -524,7 +524,7 @@ def make_handler(remote, port):
     return Handler
 
 
-def run_remote(config, key, state_file, port, web_port, poll_seconds=2):
+def run_remote(config, key, state_file, port, web_port, poll_seconds=1):
     remote = Remote(key, state_file, port, poll_seconds=poll_seconds)
     server = ThreadingHTTPServer(("127.0.0.1", web_port), make_handler(remote, web_port))
     server.daemon_threads = True
