@@ -524,12 +524,13 @@ def make_handler(remote, port):
     return Handler
 
 
-def run_remote(config, key, state_file, port, web_port):
-    remote = Remote(key, state_file, port)
+def run_remote(config, key, state_file, port, web_port, poll_seconds=2):
+    remote = Remote(key, state_file, port, poll_seconds=poll_seconds)
     server = ThreadingHTTPServer(("127.0.0.1", web_port), make_handler(remote, web_port))
     server.daemon_threads = True
     remote.start()
     print(f"LoRa remote: http://127.0.0.1:{web_port}", flush=True)
+    print(f"Status polling: wait {poll_seconds} second(s) after each reply, plus radio transmission time.", flush=True)
     try:
         server.serve_forever()
     finally:

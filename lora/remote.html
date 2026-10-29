@@ -97,7 +97,7 @@
 <h1>Robot Recorder <span class="badge">LoRa remote</span></h1>
 <p class="muted">Choose ROS 2 topics and save recordings on the Raspberry Pi.</p>
 <section class="card">
- <div class="row" style="justify-content:space-between"><h2>Status</h2><div class="row"><span id="link" class="badge">Waiting for radio</span><div class="status-updates"><span id="cpu-temp">CPU temperature: —</span><span id="age" class="muted">No update yet</span></div></div></div>
+ <div class="row" style="justify-content:space-between"><h2>Status</h2><div class="row"><span id="link" class="badge">Waiting for radio</span><span id="poll-mode" class="badge" hidden>1 s polling trial</span><div class="status-updates"><span id="cpu-temp">CPU temperature: —</span><span id="age" class="muted">No update yet</span></div></div></div>
  <div id="status" class="recorder-status"><strong id="state">Connecting to recorder…</strong><span id="name">Waiting for Pi status.</span></div>
  <div id="timer" class="recording-timer" role="timer" hidden><div class="timer-heading"><span class="timer-dot" aria-hidden="true"></span><span id="elapsed-label">Recording time</span></div><strong id="elapsed" class="timer-value">—</strong></div>
  <div class="storage-metrics">
@@ -127,7 +127,7 @@
 </section>
 <p id="browser-error" class="error" role="alert"></p>
 <footer>Files remain on the Pi. Losing radio contact does not stop recording.
- <details><summary>About radio updates</summary><p>Status requests wait 2 seconds after each reply, plus radio transmission time. The timer is a local estimate between replies. Topic lists, recording pages and details load in small radio chunks when requested. Start and Stop have priority over the next chunk.</p></details>
+ <details><summary>About radio updates</summary><p>Status requests wait <span id="poll-delay">2 seconds</span> after each reply, plus radio transmission time. The timer is a local estimate between replies. Topic lists, recording pages and details load in small radio chunks when requested. Start and Stop have priority over the next chunk.</p></details>
 </footer>
 <script>
 const $=id=>document.getElementById(id);
@@ -269,6 +269,7 @@ function renderRecordings(d){
 function render(d){
  feedback.observe(d);recordingTimer.update(d);if(stopRequestActive)recordingTimer.pause();updateTimer();lastStatus=d;
  const s=d.status,live=d.radio_connected;
+ $('poll-delay').textContent=d.poll_seconds===1?'1 second':'2 seconds';$('poll-mode').hidden=d.poll_seconds!==1;
  $('link').textContent=live?'Radio connected':d.age_seconds==null?'Waiting for radio':'Radio contact lost';$('link').className='badge '+(live?'good':'bad');
  $('age').textContent=d.age_seconds==null?'No update yet':`Last update ${Math.floor(d.age_seconds)} s ago`;
  const view=statusPresentation(d);$('state').textContent=view.title;$('status').className='recorder-status is-'+view.kind;$('name').textContent=view.detail;

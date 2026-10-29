@@ -53,6 +53,8 @@ def main():
         command.add_argument("--port", help="Serial port; auto-detects when exactly one CH340 is connected")
         if role == "remote":
             command.add_argument("--web-port", type=int, default=8081)
+            command.add_argument("--poll-seconds", type=int, choices=(1, 2), default=2,
+                                 help="Wait after each status reply: 2 is stable; 1 is a trial")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     if args.command == "pair":
@@ -110,7 +112,7 @@ def main():
             from lora.remote import run_remote
             if not 1 <= args.web_port <= 65535:
                 parser.error("web port must be between 1 and 65535")
-            run_remote(config, key, state_file, port, args.web_port)
+            run_remote(config, key, state_file, port, args.web_port, poll_seconds=args.poll_seconds)
     except KeyboardInterrupt:
         pass
     except Exception as error:
