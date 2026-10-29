@@ -2,12 +2,20 @@
 
 通过 USB LoRa 电台选择 ROS 2 话题、开始/停止录制，并查看树莓派状态。数据保存在树莓派，不通过 LoRa 传输。
 
-## 首次安装
+## 第一次使用记录器
+
+请先阅读 **[记录器使用手册（中文）](docs/user-manual.md)**：连接交换机、找到树莓派、在机器人上安装 Humble/Jazzy Zenoh 桥，再从网页选择话题并录制。适用于维护者已配置好的树莓派；无需先克隆本仓库。
+
+需要远距离控制时，再按 **[LoRa 使用说明](docs/lora-remote.md)** 配置操作笔记本。LoRa 只传命令与状态；机器人到树莓派的数据仍通过以太网/Zenoh 传输。
+
+## LoRa 首次安装
 
 需要 Linux、Python 3（建议 3.10 或更新）和 OpenSSL；无需 ROS、Zenoh 或自行编译。
 
 ```bash
-curl -fL https://github.com/FCosx/recorder-lora-remote/releases/latest/download/recorder-lora-remote.pyz -o recorder-lora-remote.pyz
+curl -fL --retry 3 --retry-all-errors \
+  https://github.com/FCosx/recorder-lora-remote/releases/latest/download/recorder-lora-remote.pyz \
+  -o recorder-lora-remote.pyz &&
 python3 recorder-lora-remote.pyz install
 ```
 
