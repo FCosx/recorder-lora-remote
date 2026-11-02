@@ -86,7 +86,13 @@ class RecorderAPI:
         return self.request(f"/api/recordings/{name}/delete", {"name": name}, timeout=5)
 
     def bandwidth(self, action):
-        return self.request('/api/bandwidth', {'action': action}, timeout=5)
+        value = self.request('/api/bandwidth', {'action': action}, timeout=3)
+        if action == 'sample':
+            deadline = time.monotonic()+1.5
+            while value.get('state') == 'measuring' and time.monotonic() < deadline:
+                time.sleep(.05)
+                value = self.request('/api/bandwidth', timeout=1)
+        return value
 
 
 class Journal:

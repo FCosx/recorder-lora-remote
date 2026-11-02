@@ -63,6 +63,8 @@ Enter the robot's sudo password when prompted and wait for `Setup complete`. The
 
 The installed files and configuration are under the robot user's `~/robot-recorder/`. The default robot ROS domain is **0**; the Pi recorder uses domain **1**. After starting the bridge in step 3, open the browser in step 4 to check the robot's topics. The corrected bridge has passed repeated-restart tests on the development laptop; its first deployment on an Orin still needs on-device validation.
 
+The launcher starts the rate helper automatically. Existing installations should rerun Step 2, then restart the bridge; an unchanged bridge binary is reused. No additional terminal is needed.
+
 ### 3. Start the robot bridge each time
 
 Run this in the **robot terminal** and keep the terminal open during recording:
@@ -91,7 +93,7 @@ Open the printed URL in that computer's browser. Include `http://` and `:8080`. 
 3. Click `Stop recording` when finished and wait for finalization. Keep the Pi powered during this process.
 4. Under `Recordings on the Pi`, click the recording's `View topics` to inspect per-topic message counts. Split MCAP files belong to one recording: expand its file list to inspect segments; `View topics` summarizes the whole recording. `Download` saves a TAR copy containing all segments to the browser's computer. `Delete` permanently removes that recording and all its segments from the Pi.
 
-Click **Refresh topics** before recording to refresh the list and estimate received bandwidth once. Each topic shows its estimated rate; selecting topics updates the total. **Estimating rates…** usually takes about 13 seconds (connection warmup followed by a five-second sample), plus radio delivery time on LoRa. Sampling then stops automatically; values stay visible until the next refresh. **—** means insufficient samples or unavailable message definitions, not zero. Temporary subscribers keep RAM counters only and never save messages. Starting a recording from either UI terminates them before rosbag starts; no estimation runs during capture. These are Pi receive rates, not a guarantee of complete delivery or sustainable storage throughput.
+Opening the page or clicking **Refresh topics** requests one quick robot-side bandwidth snapshot. Topics are sampled together for about one second, targeting a result within about 1–2 seconds on a healthy link. **—** means insufficient samples or a timeout, not zero. Per-topic rates and the selected total stay visible until the next refresh. LoRa delivery takes additional time. Temporary subscribers count bytes in robot RAM only, save no messages and send only metadata/results to the Pi. Starting recording from either UI waits for the robot to confirm that its temporary subscribers have closed; missing confirmation prevents recording from starting. These short receive-rate estimates do not guarantee complete delivery or sustainable storage throughput.
 
 The size setting is a split trigger, not a strict file-size ceiling: buffered messages can make a segment exceed it. If both limits are set, the first reached triggers a new segment; the last is usually shorter. `Ready to record` confirms that the service is available. Confirm received data using the completed recording's message counts and result. Files remain on the Pi unless a user downloads a copy.
 

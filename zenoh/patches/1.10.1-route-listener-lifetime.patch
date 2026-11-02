@@ -1,0 +1,87 @@
+diff --git a/zenoh-plugin-ros2dds/src/route_publisher.rs b/zenoh-plugin-ros2dds/src/route_publisher.rs
+index 90b7d47..c83c613 100644
+--- a/zenoh-plugin-ros2dds/src/route_publisher.rs
++++ b/zenoh-plugin-ros2dds/src/route_publisher.rs
+@@ -16,7 +16,7 @@ use std::{
+     collections::HashSet,
+     fmt,
+     ops::Deref,
+-    sync::{atomic::Ordering, Arc},
++    sync::{atomic::Ordering, Arc, Mutex},
+     time::Duration,
+ };
+ 
+@@ -28,6 +28,7 @@ use serde::{Serialize, Serializer};
+ use zenoh::{
+     key_expr::{keyexpr, OwnedKeyExpr},
+     liveliness::LivelinessToken,
++    matching::MatchingListener,
+     qos::{CongestionControl, Priority, Reliability},
+     sample::Locality,
+     Wait,
+@@ -81,6 +82,13 @@ pub struct RoutePublisher {
+         serialize_with = "serialize_pub_cache"
+     )]
+     zenoh_publisher: ZPublisher,
++    // Keep the listener scoped to the route. A background listener outlives
++    // this object and can recreate a DDS Reader after the route is removed.
++    #[serde(skip)]
++    matching_listener: Option<MatchingListener<()>>,
++    // Serialize callback activation with route retirement.
++    #[serde(skip)]
++    route_alive: Arc<Mutex<bool>>,
+     // the local DDS Reader created to serve the route (i.e. re-publish to zenoh message coming from DDS)
+     #[serde(serialize_with = "serialize_atomic_entity_guid")]
+     dds_reader: Arc<AtomicDDSEntity>,
+@@ -109,6 +117,12 @@ pub struct RoutePublisher {
+ 
+ impl Drop for RoutePublisher {
+     fn drop(&mut self) {
++        // Stop matching callbacks before deleting the DDS entity and dropping
++        // the publisher captured by the callback.
++        // Retire under the same lock used by callbacks, then release it before
++        // undeclaring the listener (which can wait for a callback).
++        *self.route_alive.lock().unwrap_or_else(|e| e.into_inner()) = false;
++        self.matching_listener.take();
+         self.deactivate_dds_reader();
+     }
+ }
+@@ -221,9 +235,11 @@ impl RoutePublisher {
+         // (copy/move all required args for the callback)
+         let dds_reader: Arc<AtomicDDSEntity> = Arc::new(DDS_ENTITY_NULL.into());
+ 
+-        publisher
++        let route_alive = Arc::new(Mutex::new(true));
++        let matching_listener = publisher
+             .matching_listener()
+             .callback({
++                let route_alive = route_alive.clone();
+                 let dds_reader = dds_reader.clone();
+                 let ros2_name = ros2_name.clone();
+                 let ros2_type = ros2_type.clone();
+@@ -236,6 +252,8 @@ impl RoutePublisher {
+                 let publisher = publisher.clone();
+ 
+                 move |status| {
++                    let alive = route_alive.lock().unwrap_or_else(|e| e.into_inner());
++                    if !*alive { return; }
+                     tracing::debug!("{route_id} MatchingStatus changed: {status:?}");
+                     if status.matching() {
+                         if let Err(e) = activate_dds_reader(
+@@ -256,7 +274,6 @@ impl RoutePublisher {
+                     }
+                 }
+             })
+-            .background()
+             .await
+             .map_err(|e| format!("Failed to listen of matching status changes: {e}",))?;
+ 
+@@ -269,6 +286,8 @@ impl RoutePublisher {
+                 publisher,
+                 cache_size,
+             },
++            matching_listener: Some(matching_listener),
++            route_alive,
+             dds_reader,
+             priority,
+             _type_info: type_info.clone(),

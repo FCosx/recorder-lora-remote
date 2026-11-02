@@ -42,4 +42,6 @@ The LoRa laptop can be installed offline and operated without the Pi's IP or acc
 
 This repository currently provides the recorder manuals and the optional LoRa client's source and [installer](https://github.com/FCosx/recorder-lora-remote/releases/latest). The maintainer prepares the Pi recording service separately. Pairing authorization in the public installer is encrypted; Pi login passwords and decrypted pairing files are kept private.
 
+The robot bridge launcher also starts a small rate helper. Refreshing either UI takes one short robot-local snapshot; recording waits for temporary readers to close. Existing robots receive the helper by rerunning the manual's setup command.
+
 The LoRa installer includes pySerial 3.5; see [Third-party notices](THIRD_PARTY_NOTICES.md).

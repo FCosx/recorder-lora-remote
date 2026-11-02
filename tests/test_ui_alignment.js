@@ -39,7 +39,7 @@ const preview={chosen:new Set(['/a','/b']),$:node,document:{querySelectorAll:()=
 vm.runInNewContext(radio.slice(radio.indexOf('function bandwidthRate'),radio.indexOf('function metadataReady'))+'\nglobalThis.render=renderBandwidth;',preview);
 preview.render({bandwidth_rates:{'/a':1024},bandwidth_loading:true});
 assert.match(node('selection-count').textContent,/1.0 KiB\/s \+ 1 unmeasured/);
-assert.match(node('bandwidth-note').textContent,/Estimating rates/);
+assert.match(node('bandwidth-note').textContent,/Estimating on robot/);
 preview.render({bandwidth_rates:{},bandwidth_measured_at:123});assert.match(node('bandwidth-note').textContent,/Refresh topics to update/);
 assert.doesNotMatch(radio,/auto-estimate|heartbeat:true|bandwidthTouchedAt/);
 console.log('Bandwidth alignment: units, partial totals and one-shot feedback passed.');

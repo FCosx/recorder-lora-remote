@@ -130,7 +130,7 @@
 </section>
 <p id="browser-error" class="error" role="alert"></p>
 <footer>Files remain on the Pi. Losing radio contact does not stop recording.
- <details><summary>About radio updates</summary><p>Status requests wait <span id="poll-delay">1 second</span> after each reply, plus radio transmission time. The timer is a local estimate between replies. Topic lists, recording pages and details load in small radio chunks when requested. Refreshing topics also requests one short rate estimate from the idle Pi; radio delivery can take longer. Start and Stop have priority over the next chunk.</p></details>
+ <details><summary>About radio updates</summary><p>Status requests wait <span id="poll-delay">1 second</span> after each reply, plus radio transmission time. The timer is a local estimate between replies. Topic lists, recording pages and details load in small radio chunks when requested. Refreshing topics also requests one short robot-side rate estimate; radio delivery can take longer. Start and Stop have priority over the next chunk.</p></details>
 </footer>
 <script>
 const $=id=>document.getElementById(id);
@@ -218,7 +218,7 @@ function renderBandwidth(d){
  $('selection-count').textContent=`${chosen.size} selected · Estimated total: ${measured?'~'+bandwidthRate(total)+(unknown?` + ${unknown} unmeasured`:''):'—'}`;
  for(const badge of document.querySelectorAll('.topic-rate'))badge.textContent=Number.isFinite(rates[badge.dataset.topic])?'~'+bandwidthRate(rates[badge.dataset.topic]):'—';
  const stamp=d.bandwidth_measured_at;
- $('bandwidth-note').textContent=d.bandwidth_error||(d.bandwidth_loading?'Estimating rates… · Waiting for radio reply':stamp?`Estimated at ${new Date(stamp*1000).toLocaleTimeString()} · Refresh topics to update.`:'Refresh topics to estimate rates once.');
+ $('bandwidth-note').textContent=d.bandwidth_error||(d.bandwidth_loading?'Estimating on robot… · Waiting for radio reply':stamp?`Estimated at ${new Date(stamp*1000).toLocaleTimeString()} · Refresh topics to update.`:'Refresh topics to estimate rates once.');
 }
 function metadataReady(d){return !sending&&d.radio_connected&&d.synchronized!==false&&!d.pending&&!d.metadata_loading&&!d.topics_loading}
 function updateControls(d){
@@ -300,7 +300,8 @@ function render(d){
  for(const action of ['start','stop']){const button=$(action),busy=d.pending===action||localAction===action,success=recent&&d.last_command.action===action;button.classList.toggle('is-busy',busy);button.classList.toggle('is-success',Boolean(success&&!busy));button.textContent=busy?(action==='start'?'Starting…':'Stopping…'):success?(action==='start'?'Started ✓':'Stop accepted ✓'):(action==='start'?'Begin recording':'Stop recording')}
  const warnings=[];if(s.storage_warning&&!available)warnings.push('Pi storage is low');if(s.last_recording_error)warnings.push('Previous recording reported an error; inspect it on the Pi');else if(s.last_recording_warning)warnings.push('Previous recording reported a warning; inspect it on the Pi');$('warning').hidden=!warnings.length;$('warning').textContent=warnings.join(' · ');
 }
-async function refresh(){try{const r=await fetch('/api/status',{signal:AbortSignal.timeout(3000)});if(!r.ok)throw Error('Status unavailable');render(await r.json());$('browser-error').textContent=''}catch(e){recordingTimer.pause();updateTimer();document.querySelectorAll('button').forEach(button=>button.disabled=true);$('link').textContent='Local controller unavailable';$('link').className='badge bad';$('state').textContent='Status outdated';$('age').textContent='Updates unavailable';$('browser-error').textContent='Cannot reach this laptop’s LoRa controller. Keep its terminal running.'}finally{setTimeout(refresh,1000)}}
+let initialTopicRefresh=false;
+async function refresh(){try{const r=await fetch('/api/status',{signal:AbortSignal.timeout(3000)});if(!r.ok)throw Error('Status unavailable');const d=await r.json();render(d);$('browser-error').textContent='';if(!initialTopicRefresh&&d.radio_connected&&d.synchronized&&!d.pending){initialTopicRefresh=true;if(d.can_start&&metadataReady(d))command('topics')}}catch(e){recordingTimer.pause();updateTimer();document.querySelectorAll('button').forEach(button=>button.disabled=true);$('link').textContent='Local controller unavailable';$('link').className='badge bad';$('state').textContent='Status outdated';$('age').textContent='Updates unavailable';$('browser-error').textContent='Cannot reach this laptop’s LoRa controller. Keep its terminal running.'}finally{setTimeout(refresh,1000)}}
 async function command(action,extra={}){
  if(action==='start'&&![$('split-size'),$('split-duration')].every(input=>input.reportValidity())){feedback.fail('Enter a whole positive MiB or seconds value, or leave the split limit blank.');render(lastStatus);return;}
  sending=true;localAction=action;feedback.begin(`Sending ${action}…`);if(action==='stop'){stopRequestActive=true;recordingTimer.pause();updateTimer()}if(lastStatus)updateControls(lastStatus);
