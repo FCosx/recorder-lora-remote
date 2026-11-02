@@ -85,9 +85,8 @@ class RecorderAPI:
             raise ValueError("Invalid recording name")
         return self.request(f"/api/recordings/{name}/delete", {"name": name}, timeout=5)
 
-    def bandwidth(self, enabled, heartbeat=False):
-        return self.request('/api/bandwidth', {'enabled': enabled, 'heartbeat': heartbeat,
-                                               'client_id': 'lora-preview'}, timeout=5)
+    def bandwidth(self, action):
+        return self.request('/api/bandwidth', {'action': action}, timeout=5)
 
 
 class Journal:
@@ -158,18 +157,19 @@ class Agent:
         if revision == ZERO and offset == 0:
             if cached is None or cached["request_id"] != request.number:
                 if request.op == Op.BANDWIDTH:
-                    if not self.fresh(request) or len(selector) != 9 or selector[0] not in (0, 1):
+                    if not self.fresh(request) or len(selector) != 9 or selector[0] not in (0, 1, 2):
                         return self.snapshot(request, Result.EXPIRED)
                     enabled = bool(selector[0])
                     if enabled and (self.catalog is None or selector[1:] != self.catalog['revision']):
                         return self.snapshot(request, Result.CATALOG_CHANGED)
-                    sample = self.api.bandwidth(enabled)
+                    sample = self.api.bandwidth('sample' if selector[0] == 2 else 'status')
                     rates = sample.get('topics', {})
                     value = {'r': [None if rates.get(name, {}).get('bytes_per_second') is None else
                                     int(round(rates[name]['bytes_per_second']))
                                     for name in self.catalog['topics']] if enabled else [],
                              't': sample.get('measured_at'),
-                             'e': bool(sample.get('client_enabled')) if enabled else False}
+                             'e': sample.get('state') == 'measuring' if enabled else False,
+                             's': sample.get('state', 'idle'), 'x': sample.get('error')}
                 elif request.op == Op.RECORDINGS:
                     if len(selector) != 2:
                         return self.snapshot(request, Result.INVALID_RECORDING)
@@ -197,8 +197,6 @@ class Agent:
         if (cached is None or cached["selector"] != selector or revision not in (ZERO, cached["revision"])
                 or self.clock() - cached["created"] > 3600 or offset >= len(cached["packed"])):
             return self.snapshot(request, Result.INVALID_RECORDING)
-        if request.op == Op.BANDWIDTH and selector[0] and revision != ZERO:
-            self.api.bandwidth(True, heartbeat=True)
         response = self.snapshot(request, Result.OK)
         room = MAX_PAYLOAD - RESPONSE.size - 1 - len(response.name.encode("ascii")[:48]) - CATALOG_RESPONSE.size
         return replace(response, data=CATALOG_RESPONSE.pack(cached["revision"], offset, len(cached["packed"]))

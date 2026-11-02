@@ -37,19 +37,9 @@ By default, status requests wait one second after each reply, plus radio transmi
 
 Before starting, optionally set MiB and/or seconds under `Split MCAP files`. Leave blank to disable splitting. If both limits are set, the first reached starts a new segment; all segments belong to one recording. CPU temperature and the age of the last status update appear at the upper right.
 
-## Optional bandwidth preview
+## Bandwidth preview
 
-After refreshing topics, enable **Auto estimate · 5 s** (off by default).
-Each topic shows a received byte rate and selecting topics updates the total.
-**—** means insufficient data, not zero. The idle Pi measures every five seconds;
-LoRa sends only compact numeric summaries. Radio delivery can take longer,
-especially with many topics. Start/Stop, status and requested lists have priority.
-
-The subscriber retains only RAM counters and never saves messages or bags.
-Starting a recording from either interface terminates it before rosbag starts
-and turns the switch off. It cannot run during capture. Re-enable afterward if
-needed. Closing the page/controller lets its preview lease expire without
-stopping an ongoing recording. Both Pi agent and remote need the updated version.
+Click **Refresh topics** before recording to refresh the list and estimate received bandwidth once. Each topic shows its estimated rate; selecting topics updates the total. **Estimating rates…** usually takes about 13 seconds (connection warmup followed by a five-second sample), plus radio delivery time on LoRa. Sampling then stops automatically; values stay visible until the next refresh. **—** means insufficient samples or unavailable message definitions, not zero. Temporary subscribers keep RAM counters only and never save messages. Starting a recording from either UI terminates them before rosbag starts; no estimation runs during capture. These are Pi receive rates, not a guarantee of complete delivery or sustainable storage throughput. Start/Stop, status and requested lists have priority over estimate delivery. Update both the Pi agent and remote to use this behavior.
 
 ## View recordings
 

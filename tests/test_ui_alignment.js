@@ -31,14 +31,15 @@ const accepted={...status,last_command:{id:'12',action:'stop',result:'accepted',
 f.observe(accepted,500001);assert.equal(f.reading(accepted,500002).kind,'success');assert.equal(f.reading(accepted,507000).text,'Ready for a command');
 f.observe({...status,topics_loading:true},600000);f.observe({...status,topics_loading:false},601000);assert.equal(f.recentJob('topics',601500),true);assert.equal(f.recentJob('topics',603000),false);
 console.log('UI alignment: status, rate precision and persistent-feedback checks passed.');
-// LAN and radio previews use the same units and keep a switch stable in flight.
+// LAN and radio previews use the same units and concise one-shot feedback.
 const bw={};vm.runInNewContext(radio.slice(radio.indexOf('function bandwidthRate'),radio.indexOf('function renderBandwidth'))+'\nglobalThis.rate=bandwidthRate;',bw);
 for(const [value,text] of [[null,'—'],[1024,'1.0 KiB/s'],[2*1024**2,'2.0 MiB/s'],[12,'12 B/s']])assert.equal(bw.rate(value),text);
-const nodes=new Map();const node=id=>{if(!nodes.has(id))nodes.set(id,{checked:id==='auto-estimate',textContent:''});return nodes.get(id)};
-const preview={chosen:new Set(['/a','/b']),$:node,document:{querySelectorAll:()=>[]},sending:true,localAction:'bandwidth',topicRevision:'catalog',performance:{now:()=>0},bandwidthTouchedAt:0};
+const nodes=new Map();const node=id=>{if(!nodes.has(id))nodes.set(id,{textContent:''});return nodes.get(id)};
+const preview={chosen:new Set(['/a','/b']),$:node,document:{querySelectorAll:()=>[]},Date};
 vm.runInNewContext(radio.slice(radio.indexOf('function bandwidthRate'),radio.indexOf('function metadataReady'))+'\nglobalThis.render=renderBandwidth;',preview);
-preview.render({bandwidth_rates:{'/a':1024},can_start:true,bandwidth_supported:true,bandwidth_enabled:false});
-assert.equal(node('auto-estimate').checked,true,'Do not undo the user toggle while its local request is pending');
+preview.render({bandwidth_rates:{'/a':1024},bandwidth_loading:true});
 assert.match(node('selection-count').textContent,/1.0 KiB\/s \+ 1 unmeasured/);
-preview.localAction=null;preview.render({bandwidth_rates:{},bandwidth_enabled:false});assert.equal(node('auto-estimate').checked,false);
-console.log('Bandwidth alignment: units, partial totals and stable switch feedback passed.');
+assert.match(node('bandwidth-note').textContent,/Estimating rates/);
+preview.render({bandwidth_rates:{},bandwidth_measured_at:123});assert.match(node('bandwidth-note').textContent,/Refresh topics to update/);
+assert.doesNotMatch(radio,/auto-estimate|heartbeat:true|bandwidthTouchedAt/);
+console.log('Bandwidth alignment: units, partial totals and one-shot feedback passed.');

@@ -98,8 +98,8 @@ class Remote:
         self.bandwidth_error = None
         self.bandwidth_transfer = None
         self.bandwidth_next = 0
-        self.bandwidth_browser_until = 0
-        self.bandwidth_disable_due = False
+        self.bandwidth_action = 1
+        self.bandwidth_deadline = 0
 
     def status(self):
         with self.lock:
@@ -130,7 +130,7 @@ class Remote:
                 "bandwidth_rates": self.bandwidth_rates,
                 "bandwidth_measured_at": self.bandwidth_measured_at,
                 "bandwidth_error": self.bandwidth_error,
-                "bandwidth_loading": self.bandwidth_transfer is not None,
+                "bandwidth_loading": self.bandwidth_enabled,
                 "recordings": self.recordings, "recordings_revision": self.recordings_revision.hex(),
                 "recordings_health": self.recordings_health,
                 "recordings_total": self.recordings_total, "recordings_next": self.recordings_next,
@@ -166,6 +166,8 @@ class Remote:
                     if not status["splitting_supported"]:
                         raise ValueError("Update the Pi LoRa agent before using file splitting")
                     data += SPLIT_LIMITS.pack(size, duration)
+            self.bandwidth_enabled = False
+            self.bandwidth_transfer = None
             self.pending = "start" if op in (Op.START, Op.START_SELECTED) else "stop"
             self.queue.put_nowait((op, self.latest, data))
 
@@ -177,42 +179,26 @@ class Remote:
         if not status["recording_management"]:
             raise ValueError("Update the Pi LoRa agent before using recording management")
 
-    def set_bandwidth(self, enabled, heartbeat=False):
-        if type(enabled) is not bool or type(heartbeat) is not bool:
-            raise ValueError('Expected an enabled switch')
-        with self.lock:
-            if heartbeat:
-                if self.bandwidth_enabled:
-                    self.bandwidth_browser_until = time.monotonic() + 15
-                return
-            if enabled:
-                status = self.status()
-                if (not status['can_start'] or not status['bandwidth_supported']
-                        or self.catalog_revision == ZERO or self.topic_transfer is not None):
-                    raise ValueError('Wait for fresh idle status and refresh topics first')
-                self.bandwidth_browser_until = time.monotonic() + 15
-            self.bandwidth_enabled = enabled
-            self.bandwidth_disable_due = not enabled
-            self.bandwidth_transfer = None
-            self.bandwidth_error = None
-            self.bandwidth_next = 0
-
     def next_bandwidth_request(self):
-        if self.bandwidth_enabled and time.monotonic() > self.bandwidth_browser_until:
+        # A refresh creates one job. Status polls cannot trigger new sampling.
+        if not self.bandwidth_enabled:
+            return None
+        if time.monotonic() > self.bandwidth_deadline:
             self.bandwidth_enabled = False
-            self.bandwidth_disable_due = True
             self.bandwidth_transfer = None
+            self.bandwidth_error = 'Rate estimates timed out; refresh topics to retry'
+            return None
         if (self.latest is None or self.latest.state != State.IDLE
                 or not self.latest.flags & 128):
             return None
         if self.bandwidth_transfer is None:
-            if not self.bandwidth_disable_due and (not self.bandwidth_enabled or time.monotonic() < self.bandwidth_next):
+            if time.monotonic() < self.bandwidth_next:
                 return None
             self.bandwidth_transfer = {'transfer': JSONTransfer(), 'revision': self.catalog_revision,
-                                       'enabled': self.bandwidth_enabled}
+                                       'action': self.bandwidth_action}
         transfer = self.bandwidth_transfer
         return (Op.BANDWIDTH, self.latest, transfer['transfer'].request()
-                + bytes([transfer['enabled']]) + transfer['revision'])
+                + bytes([transfer['action']]) + transfer['revision'])
 
     def accept_bandwidth(self, response):
         transfer = self.bandwidth_transfer
@@ -224,29 +210,29 @@ class Remote:
             value = transfer['transfer'].accept(response.data)
             if value is None:
                 return
-            rows, stamp, enabled = value.get('r'), value.get('t'), value.get('e')
-            if (not isinstance(rows, list) or type(enabled) is not bool or
+            rows, stamp, measuring = value.get('r'), value.get('t'), value.get('e')
+            if (not isinstance(rows, list) or type(measuring) is not bool or
                     (stamp is not None and (type(stamp) not in (int, float) or not math.isfinite(stamp))) or
                     any(rate is not None and (type(rate) not in (int, float) or not math.isfinite(rate) or rate < 0) for rate in rows)):
                 raise ValueError('Invalid rate estimates')
-            if transfer['enabled']:
-                if transfer['revision'] != self.catalog_revision or len(rows) != len(self.catalog):
-                    raise ValueError('Topic list changed; refresh topics')
-                self.bandwidth_rates = dict(zip(self.catalog, rows))
-                self.bandwidth_measured_at = stamp
-                self.bandwidth_enabled = enabled
-            else:
-                self.bandwidth_disable_due = False
-                self.bandwidth_rates = {}
-                self.bandwidth_measured_at = None
+            if transfer['revision'] != self.catalog_revision or len(rows) != len(self.catalog):
+                raise ValueError('Topic list changed; refresh topics')
+            if value.get('x'):
+                raise ValueError('Rate estimates unavailable; refresh topics to retry')
             self.bandwidth_transfer = None
-            self.bandwidth_next = time.monotonic() + 5
+            self.bandwidth_action = 1  # All subsequent requests only read the result.
+            self.bandwidth_enabled = measuring
+            if not measuring:
+                if value.get('s') == 'complete':
+                    self.bandwidth_rates = dict(zip(self.catalog, rows))
+                    self.bandwidth_measured_at = stamp
+                else:
+                    self.bandwidth_error = 'Estimation stopped; refresh topics to retry'
+            self.bandwidth_next = time.monotonic() + 2
         except (ValueError, zlib.error) as error:
             self.bandwidth_error = str(error)
             self.bandwidth_enabled = False
-            self.bandwidth_disable_due = True
             self.bandwidth_transfer = None
-            self.bandwidth_next = time.monotonic() + 5
 
     def refresh_recordings(self, offset=0):
         with self.lock:
@@ -343,6 +329,11 @@ class Remote:
                 raise ValueError("Wait for radio status and any pending recording command")
             if self.topic_transfer is not None or self.data_transfer is not None:
                 raise ValueError("A topic refresh is already running")
+            self.bandwidth_enabled = False
+            self.bandwidth_transfer = None
+            self.bandwidth_rates = {}
+            self.bandwidth_measured_at = None
+            self.bandwidth_error = None
             self.catalog = []
             self.catalog_revision = ZERO
             self.topic_error = None
@@ -377,6 +368,12 @@ class Remote:
                     raise ValueError("Invalid topic list")
                 self.catalog, self.catalog_revision = topics, revision
                 self.topic_transfer = None
+                # Only an explicit topic refresh reaches here, never page polling.
+                self.bandwidth_enabled = bool(self.latest and self.latest.state == State.IDLE
+                                              and self.latest.flags & 128 and topics)
+                self.bandwidth_action = 2
+                self.bandwidth_next = 0
+                self.bandwidth_deadline = time.monotonic() + 120
         except (ValueError, zlib.error) as error:
             self.topic_error = str(error)
             self.topic_transfer = None
@@ -386,7 +383,6 @@ class Remote:
         if response.state != State.IDLE or (previous is not None and previous.boot != response.boot):
             self.bandwidth_enabled = False
             self.bandwidth_transfer = None
-            self.bandwidth_disable_due = False
         if previous is not None and previous.boot != response.boot:
             self.completion_target = None
             self.completion_refresh_due = False
@@ -595,7 +591,7 @@ def make_handler(remote, port):
                 if not isinstance(body, dict):
                     raise ValueError("Expected an object")
                 if self.path == '/api/bandwidth':
-                    remote.set_bandwidth(body.get('enabled'), body.get('heartbeat', False))
+                    pass  # Legacy clients may read status but cannot enable auto sampling.
                 elif self.path == "/api/topics":
                     remote.refresh_topics()
                 elif self.path == "/api/recordings":
