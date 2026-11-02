@@ -40,6 +40,6 @@ vm.runInNewContext(radio.slice(radio.indexOf('function bandwidthRate'),radio.ind
 preview.render({bandwidth_rates:{'/a':1024},bandwidth_loading:true});
 assert.match(node('selection-count').textContent,/1.0 KiB\/s \+ 1 unmeasured/);
 assert.match(node('bandwidth-note').textContent,/Estimating on robot/);
-preview.render({bandwidth_rates:{},bandwidth_measured_at:123});assert.match(node('bandwidth-note').textContent,/Refresh topics to update/);
+preview.chosen.clear();preview.render({bandwidth_rates:{},bandwidth_measured_at:123});assert.match(node('selection-count').textContent,/Select topics above/);assert.doesNotMatch(node('selection-count').textContent,/0 selected|—/);assert.match(node('bandwidth-note').textContent,/Refresh topics to check again/);
 assert.doesNotMatch(radio,/auto-estimate|heartbeat:true|bandwidthTouchedAt/);
 console.log('Bandwidth alignment: units, partial totals and one-shot feedback passed.');

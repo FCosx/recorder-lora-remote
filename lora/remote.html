@@ -121,7 +121,7 @@
 </section>
 <section class="card">
  <div class="row" style="justify-content:space-between"><h2>Available topics</h2><div class="row"><button id="refresh-topics" class="secondary" disabled>Refresh topics</button></div></div>
- <p id="topic-progress" class="muted" role="status">Refresh to get the topic list over LoRa.</p><div id="topic-list" class="topic-list"></div><p id="selection-count" class="muted">0 selected · Estimated total: —</p><p id="bandwidth-note" class="muted" role="status">Refresh topics to estimate rates once.</p>
+ <p id="topic-progress" class="muted" role="status">Refresh to get the topic list over LoRa.</p><div id="topic-list" class="topic-list"></div><p id="selection-count" class="muted">Select topics above to see their combined bandwidth.</p><p id="bandwidth-note" class="muted" role="status">Refresh topics checks the bandwidth of each topic.</p>
 </section>
 <section class="card">
  <div class="row" style="justify-content:space-between"><h2>Recordings on the Pi</h2><button id="refresh-recordings" class="secondary" disabled>Refresh recordings</button></div>
@@ -215,10 +215,10 @@ function renderBandwidth(d){
  const rates=d.bandwidth_rates||{};let total=0,unknown=0;
  for(const name of chosen){if(Number.isFinite(rates[name]))total+=rates[name];else unknown++}
  const measured=chosen.size-unknown;
- $('selection-count').textContent=`${chosen.size} selected · Estimated total: ${measured?'~'+bandwidthRate(total)+(unknown?` + ${unknown} unmeasured`:''):'—'}`;
+ $('selection-count').textContent=chosen.size?`${chosen.size} ${chosen.size===1?'topic':'topics'} selected · Estimated bandwidth: ${measured?'~'+bandwidthRate(total)+(unknown?` + ${unknown} unmeasured`:''):'—'}`:'Select topics above to see their combined bandwidth.';
  for(const badge of document.querySelectorAll('.topic-rate'))badge.textContent=Number.isFinite(rates[badge.dataset.topic])?'~'+bandwidthRate(rates[badge.dataset.topic]):'—';
  const stamp=d.bandwidth_measured_at;
- $('bandwidth-note').textContent=d.bandwidth_error||(d.bandwidth_loading?'Estimating on robot… · Waiting for radio reply':stamp?`Estimated at ${new Date(stamp*1000).toLocaleTimeString()} · Refresh topics to update.`:'Refresh topics to estimate rates once.');
+ $('bandwidth-note').textContent=d.bandwidth_error||(d.bandwidth_loading?'Estimating on robot… · Waiting for radio reply':stamp?`Bandwidth checked at ${new Date(stamp*1000).toLocaleTimeString()} · Refresh topics to check again.`:'Refresh topics checks the bandwidth of each topic.');
 }
 function metadataReady(d){return !sending&&d.radio_connected&&d.synchronized!==false&&!d.pending&&!d.metadata_loading&&!d.topics_loading}
 function updateControls(d){
