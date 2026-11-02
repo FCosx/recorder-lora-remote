@@ -37,6 +37,20 @@ By default, status requests wait one second after each reply, plus radio transmi
 
 Before starting, optionally set MiB and/or seconds under `Split MCAP files`. Leave blank to disable splitting. If both limits are set, the first reached starts a new segment; all segments belong to one recording. CPU temperature and the age of the last status update appear at the upper right.
 
+## Optional bandwidth preview
+
+After refreshing topics, enable **Auto estimate · 5 s** (off by default).
+Each topic shows a received byte rate and selecting topics updates the total.
+**—** means insufficient data, not zero. The idle Pi measures every five seconds;
+LoRa sends only compact numeric summaries. Radio delivery can take longer,
+especially with many topics. Start/Stop, status and requested lists have priority.
+
+The subscriber retains only RAM counters and never saves messages or bags.
+Starting a recording from either interface terminates it before rosbag starts
+and turns the switch off. It cannot run during capture. Re-enable afterward if
+needed. Closing the page/controller lets its preview lease expire without
+stopping an ongoing recording. Both Pi agent and remote need the updated version.
+
 ## View recordings
 
 `Refresh recordings` loads five completed recordings per page, showing their names, start times, sizes, durations and message counts. `View topics` loads topic names, message counts, average Hz and types. `Delete` requires confirmation and permanently removes the recording and all its files; it is available only while the recorder is idle. Warning/Error badges include brief reasons, with more detail under `View topics`.

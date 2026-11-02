@@ -92,6 +92,14 @@ class Remote:
         self.completion_refresh_due = False
         self.completed_recording = None
         self.completed_at = None
+        self.bandwidth_enabled = False
+        self.bandwidth_rates = {}
+        self.bandwidth_measured_at = None
+        self.bandwidth_error = None
+        self.bandwidth_transfer = None
+        self.bandwidth_next = 0
+        self.bandwidth_browser_until = 0
+        self.bandwidth_disable_due = False
 
     def status(self):
         with self.lock:
@@ -117,6 +125,12 @@ class Remote:
                 "topics_error": self.topic_error,
                 "recording_management": bool(self.latest and self.latest.flags & 16),
                 "splitting_supported": bool(self.latest and self.latest.flags & 32),
+                "bandwidth_supported": bool(self.latest and self.latest.flags & 128),
+                "bandwidth_enabled": self.bandwidth_enabled,
+                "bandwidth_rates": self.bandwidth_rates,
+                "bandwidth_measured_at": self.bandwidth_measured_at,
+                "bandwidth_error": self.bandwidth_error,
+                "bandwidth_loading": self.bandwidth_transfer is not None,
                 "recordings": self.recordings, "recordings_revision": self.recordings_revision.hex(),
                 "recordings_health": self.recordings_health,
                 "recordings_total": self.recordings_total, "recordings_next": self.recordings_next,
@@ -162,6 +176,77 @@ class Remote:
             raise ValueError("Wait for fresh radio status and the current request to finish")
         if not status["recording_management"]:
             raise ValueError("Update the Pi LoRa agent before using recording management")
+
+    def set_bandwidth(self, enabled, heartbeat=False):
+        if type(enabled) is not bool or type(heartbeat) is not bool:
+            raise ValueError('Expected an enabled switch')
+        with self.lock:
+            if heartbeat:
+                if self.bandwidth_enabled:
+                    self.bandwidth_browser_until = time.monotonic() + 15
+                return
+            if enabled:
+                status = self.status()
+                if (not status['can_start'] or not status['bandwidth_supported']
+                        or self.catalog_revision == ZERO or self.topic_transfer is not None):
+                    raise ValueError('Wait for fresh idle status and refresh topics first')
+                self.bandwidth_browser_until = time.monotonic() + 15
+            self.bandwidth_enabled = enabled
+            self.bandwidth_disable_due = not enabled
+            self.bandwidth_transfer = None
+            self.bandwidth_error = None
+            self.bandwidth_next = 0
+
+    def next_bandwidth_request(self):
+        if self.bandwidth_enabled and time.monotonic() > self.bandwidth_browser_until:
+            self.bandwidth_enabled = False
+            self.bandwidth_disable_due = True
+            self.bandwidth_transfer = None
+        if (self.latest is None or self.latest.state != State.IDLE
+                or not self.latest.flags & 128):
+            return None
+        if self.bandwidth_transfer is None:
+            if not self.bandwidth_disable_due and (not self.bandwidth_enabled or time.monotonic() < self.bandwidth_next):
+                return None
+            self.bandwidth_transfer = {'transfer': JSONTransfer(), 'revision': self.catalog_revision,
+                                       'enabled': self.bandwidth_enabled}
+        transfer = self.bandwidth_transfer
+        return (Op.BANDWIDTH, self.latest, transfer['transfer'].request()
+                + bytes([transfer['enabled']]) + transfer['revision'])
+
+    def accept_bandwidth(self, response):
+        transfer = self.bandwidth_transfer
+        if transfer is None:
+            return
+        try:
+            if response is None or response.result != Result.OK:
+                raise ValueError('Rate estimates unavailable; check radio status and refresh topics')
+            value = transfer['transfer'].accept(response.data)
+            if value is None:
+                return
+            rows, stamp, enabled = value.get('r'), value.get('t'), value.get('e')
+            if (not isinstance(rows, list) or type(enabled) is not bool or
+                    (stamp is not None and (type(stamp) not in (int, float) or not math.isfinite(stamp))) or
+                    any(rate is not None and (type(rate) not in (int, float) or not math.isfinite(rate) or rate < 0) for rate in rows)):
+                raise ValueError('Invalid rate estimates')
+            if transfer['enabled']:
+                if transfer['revision'] != self.catalog_revision or len(rows) != len(self.catalog):
+                    raise ValueError('Topic list changed; refresh topics')
+                self.bandwidth_rates = dict(zip(self.catalog, rows))
+                self.bandwidth_measured_at = stamp
+                self.bandwidth_enabled = enabled
+            else:
+                self.bandwidth_disable_due = False
+                self.bandwidth_rates = {}
+                self.bandwidth_measured_at = None
+            self.bandwidth_transfer = None
+            self.bandwidth_next = time.monotonic() + 5
+        except (ValueError, zlib.error) as error:
+            self.bandwidth_error = str(error)
+            self.bandwidth_enabled = False
+            self.bandwidth_disable_due = True
+            self.bandwidth_transfer = None
+            self.bandwidth_next = time.monotonic() + 5
 
     def refresh_recordings(self, offset=0):
         with self.lock:
@@ -298,6 +383,10 @@ class Remote:
 
     def accept_snapshot(self, response):
         previous = self.latest
+        if response.state != State.IDLE or (previous is not None and previous.boot != response.boot):
+            self.bandwidth_enabled = False
+            self.bandwidth_transfer = None
+            self.bandwidth_disable_due = False
         if previous is not None and previous.boot != response.boot:
             self.completion_target = None
             self.completion_refresh_due = False
@@ -321,7 +410,7 @@ class Remote:
 
     def exchange(self, request):
         frame = request.encode(self.key)
-        for attempt in range(self.attempts):
+        for attempt in range(1 if request.op == Op.BANDWIDTH else self.attempts):
             if self.stopped.is_set():
                 return None
             try:
@@ -371,7 +460,10 @@ class Remote:
                                                       "transfer": JSONTransfer(), "completion": True}
                                 continue
                             else:
-                                continue
+                                bandwidth_request = self.next_bandwidth_request()
+                                if bandwidth_request is None:
+                                    continue
+                                op, snapshot, data = bandwidth_request
                 request = Request(op, counter.next(), **({
                     "tick": snapshot.tick, "boot": snapshot.boot, "recording": snapshot.recording,
                 } if snapshot is not None else {}), data=data)
@@ -408,6 +500,8 @@ class Remote:
                         else:
                             self.recordings_error = "No recording reply; reconnect and refresh recordings"
                             self.data_transfer = None
+                    elif op == Op.BANDWIDTH:
+                        self.accept_bandwidth(response)
                     elif op not in (Op.STATUS, Op.SYNC):
                         result = response.result if response else Result.UNKNOWN
                         action = "delete" if op == Op.DELETE else "start" if op in (Op.START, Op.START_SELECTED) else "stop"
@@ -431,7 +525,7 @@ class Remote:
                 # Wait after each reply; commands take priority over the next status poll.
                 if op == Op.SYNC and response is None:
                     self.stopped.wait(1)
-                if op not in (Op.TOPICS, Op.RECORDINGS, Op.BAG_INFO):
+                if op not in (Op.TOPICS, Op.RECORDINGS, Op.BAG_INFO, Op.BANDWIDTH):
                     next_poll = time.monotonic() + (0.5 if op != Op.STATUS else self.poll_seconds)
                 elif self.stopped.wait(0.3):
                     break
@@ -491,7 +585,7 @@ def make_handler(remote, port):
             if (not self.valid_host() or self.headers.get("X-LoRa-Control") != token
                     or (origin is not None and origin != "http://" + self.headers.get("Host", ""))):
                 return self.reply(403, {"error": "Open the local control page before sending commands"})
-            if self.path not in ("/api/start", "/api/stop", "/api/topics", "/api/recordings", "/api/recording-info", "/api/delete"):
+            if self.path not in ("/api/start", "/api/stop", "/api/topics", "/api/recordings", "/api/recording-info", "/api/delete", "/api/bandwidth"):
                 return self.reply(404, {"error": "Unknown endpoint"})
             try:
                 length = int(self.headers.get("Content-Length", "0"))
@@ -500,7 +594,9 @@ def make_handler(remote, port):
                 body = json.loads(self.rfile.read(length) or b"{}")
                 if not isinstance(body, dict):
                     raise ValueError("Expected an object")
-                if self.path == "/api/topics":
+                if self.path == '/api/bandwidth':
+                    remote.set_bandwidth(body.get('enabled'), body.get('heartbeat', False))
+                elif self.path == "/api/topics":
                     remote.refresh_topics()
                 elif self.path == "/api/recordings":
                     remote.refresh_recordings(body.get("offset", 0))

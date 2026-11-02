@@ -46,6 +46,7 @@ class Op(IntEnum):
     RECORDINGS = 6
     BAG_INFO = 7
     DELETE = 8
+    BANDWIDTH = 9
 
 
 class State(IntEnum):
@@ -255,6 +256,7 @@ class Response:
             "segment_count": None if segments == 65535 else segments,
             "can_start": bool(self.flags & 2), "last_recording_warning": bool(self.flags & 4),
             "last_recording_error": bool(self.flags & 8),
+            "bandwidth_supported": bool(self.flags & 128),
         }
 
 

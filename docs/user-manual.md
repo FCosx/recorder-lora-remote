@@ -91,6 +91,14 @@ Open the printed URL in that computer's browser. Include `http://` and `:8080`. 
 3. Click `Stop recording` when finished and wait for finalization. Keep the Pi powered during this process.
 4. Under `Recordings on the Pi`, click the recording's `View topics` to inspect per-topic message counts. Split MCAP files belong to one recording: expand its file list to inspect segments; `View topics` summarizes the whole recording. `Download` saves a TAR copy containing all segments to the browser's computer. `Delete` permanently removes that recording and all its segments from the Pi.
 
+Optionally enable **Auto estimate · 5 s** before recording (off by default).
+Per-topic received rates and the selected total update every five seconds on
+the idle Pi. **—** means insufficient samples or missing message definitions,
+not zero. The preview counts bytes in RAM without saving messages; it stops
+before recording and the switch turns off. Re-enable it afterward if needed.
+Estimates do not guarantee complete delivery or sustainable storage throughput.
+The LoRa page offers the same option; radio delivery can take longer.
+
 The size setting is a split trigger, not a strict file-size ceiling: buffered messages can make a segment exceed it. If both limits are set, the first reached triggers a new segment; the last is usually shorter. `Ready to record` confirms that the service is available. Confirm received data using the completed recording's message counts and result. Files remain on the Pi unless a user downloads a copy.
 
 ## Optional enhancement: LoRa remote control

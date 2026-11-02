@@ -9,6 +9,9 @@ let lanRate=ctx.rate;
 if(fs.existsSync(path.join(root,'index.html'))){
  const lan=fs.readFileSync(path.join(root,'index.html'),'utf8').split('<script>')[1].split('</script>')[0];new vm.Script(lan);
  const local={};vm.runInNewContext(lan.slice(lan.indexOf('function recordedRate'),lan.indexOf('function updateStatusAge'))+'\nglobalThis.rate=recordedRate;',local);lanRate=local.rate;
+ const notices={};vm.runInNewContext(lan.slice(lan.indexOf('function recordingWarning'),lan.indexOf('async function refreshRecordings'))+'\nglobalThis.warning=recordingWarning;',notices);
+ assert.equal(notices.warning({state:'warning',data_loss:{cache_dropped:17109},message:'Detailed per-topic diagnostics '.repeat(100)}),'Warning: Data loss detected');
+ assert.equal(notices.warning({state:'error',data_loss:{unflushed_messages:2},exit_code:1}),'Error: Data loss detected · Recorder exited with code 1');
 }
 for(const [messages,seconds] of [[1,25],[1,250],[1,2500],[1,2e7],[1000,20],[0,10],[1,0],[null,10]])assert.equal(ctx.rate(messages,seconds),lanRate(messages,seconds));
 assert.equal(ctx.rate(1,25),'0.04');assert.notEqual(ctx.rate(1,2e7),'0');
@@ -28,3 +31,14 @@ const accepted={...status,last_command:{id:'12',action:'stop',result:'accepted',
 f.observe(accepted,500001);assert.equal(f.reading(accepted,500002).kind,'success');assert.equal(f.reading(accepted,507000).text,'Ready for a command');
 f.observe({...status,topics_loading:true},600000);f.observe({...status,topics_loading:false},601000);assert.equal(f.recentJob('topics',601500),true);assert.equal(f.recentJob('topics',603000),false);
 console.log('UI alignment: status, rate precision and persistent-feedback checks passed.');
+// LAN and radio previews use the same units and keep a switch stable in flight.
+const bw={};vm.runInNewContext(radio.slice(radio.indexOf('function bandwidthRate'),radio.indexOf('function renderBandwidth'))+'\nglobalThis.rate=bandwidthRate;',bw);
+for(const [value,text] of [[null,'—'],[1024,'1.0 KiB/s'],[2*1024**2,'2.0 MiB/s'],[12,'12 B/s']])assert.equal(bw.rate(value),text);
+const nodes=new Map();const node=id=>{if(!nodes.has(id))nodes.set(id,{checked:id==='auto-estimate',textContent:''});return nodes.get(id)};
+const preview={chosen:new Set(['/a','/b']),$:node,document:{querySelectorAll:()=>[]},sending:true,localAction:'bandwidth',topicRevision:'catalog',performance:{now:()=>0},bandwidthTouchedAt:0};
+vm.runInNewContext(radio.slice(radio.indexOf('function bandwidthRate'),radio.indexOf('function metadataReady'))+'\nglobalThis.render=renderBandwidth;',preview);
+preview.render({bandwidth_rates:{'/a':1024},can_start:true,bandwidth_supported:true,bandwidth_enabled:false});
+assert.equal(node('auto-estimate').checked,true,'Do not undo the user toggle while its local request is pending');
+assert.match(node('selection-count').textContent,/1.0 KiB\/s \+ 1 unmeasured/);
+preview.localAction=null;preview.render({bandwidth_rates:{},bandwidth_enabled:false});assert.equal(node('auto-estimate').checked,false);
+console.log('Bandwidth alignment: units, partial totals and stable switch feedback passed.');

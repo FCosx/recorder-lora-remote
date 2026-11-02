@@ -85,6 +85,10 @@ class RecorderAPI:
             raise ValueError("Invalid recording name")
         return self.request(f"/api/recordings/{name}/delete", {"name": name}, timeout=5)
 
+    def bandwidth(self, enabled, heartbeat=False):
+        return self.request('/api/bandwidth', {'enabled': enabled, 'heartbeat': heartbeat,
+                                               'client_id': 'lora-preview'}, timeout=5)
+
 
 class Journal:
     """Persist the intent BEFORE executing: retries never repeat an API action.
@@ -144,6 +148,8 @@ class Agent:
         self.recording_transfers = {}
 
     def recording_response(self, request):
+        if request.op == Op.BANDWIDTH and not self.fresh(request):
+            return self.snapshot(request, Result.EXPIRED)
         if len(request.data) < CATALOG_REQUEST.size:
             return self.snapshot(request, Result.INVALID_RECORDING)
         revision, offset = CATALOG_REQUEST.unpack(request.data[:CATALOG_REQUEST.size])
@@ -151,7 +157,20 @@ class Agent:
         cached = self.recording_transfers.get(request.op)
         if revision == ZERO and offset == 0:
             if cached is None or cached["request_id"] != request.number:
-                if request.op == Op.RECORDINGS:
+                if request.op == Op.BANDWIDTH:
+                    if not self.fresh(request) or len(selector) != 9 or selector[0] not in (0, 1):
+                        return self.snapshot(request, Result.EXPIRED)
+                    enabled = bool(selector[0])
+                    if enabled and (self.catalog is None or selector[1:] != self.catalog['revision']):
+                        return self.snapshot(request, Result.CATALOG_CHANGED)
+                    sample = self.api.bandwidth(enabled)
+                    rates = sample.get('topics', {})
+                    value = {'r': [None if rates.get(name, {}).get('bytes_per_second') is None else
+                                    int(round(rates[name]['bytes_per_second']))
+                                    for name in self.catalog['topics']] if enabled else [],
+                             't': sample.get('measured_at'),
+                             'e': bool(sample.get('client_enabled')) if enabled else False}
+                elif request.op == Op.RECORDINGS:
                     if len(selector) != 2:
                         return self.snapshot(request, Result.INVALID_RECORDING)
                     page = self.api.recordings(int.from_bytes(selector, "big"))
@@ -178,6 +197,8 @@ class Agent:
         if (cached is None or cached["selector"] != selector or revision not in (ZERO, cached["revision"])
                 or self.clock() - cached["created"] > 3600 or offset >= len(cached["packed"])):
             return self.snapshot(request, Result.INVALID_RECORDING)
+        if request.op == Op.BANDWIDTH and selector[0] and revision != ZERO:
+            self.api.bandwidth(True, heartbeat=True)
         response = self.snapshot(request, Result.OK)
         room = MAX_PAYLOAD - RESPONSE.size - 1 - len(response.name.encode("ascii")[:48]) - CATALOG_RESPONSE.size
         return replace(response, data=CATALOG_RESPONSE.pack(cached["revision"], offset, len(cached["packed"]))
@@ -292,7 +313,7 @@ class Agent:
         except Exception:
             status = {}
             state = State.UNAVAILABLE
-        flags = 16 | 32 | 64 | int(bool(status.get("storage_warning"))) | (int(bool(status.get("can_start"))) << 1)
+        flags = 16 | 32 | 64 | 128 | int(bool(status.get("storage_warning"))) | (int(bool(status.get("can_start"))) << 1)
         health = status.get("last_result") or {}
         flags |= int(health.get("state") == "warning") << 2
         flags |= int(health.get("state") == "error") << 3
@@ -330,11 +351,11 @@ class Agent:
             except Exception:
                 LOG.exception("Topic discovery failed")
                 return self.snapshot(request, Result.API_ERROR)
-        if request.op in (Op.RECORDINGS, Op.BAG_INFO):
+        if request.op in (Op.RECORDINGS, Op.BAG_INFO, Op.BANDWIDTH):
             try:
                 return self.recording_response(request)
             except APIRejected:
-                return self.snapshot(request, Result.NOT_FOUND)
+                return self.snapshot(request, Result.BUSY if request.op == Op.BANDWIDTH else Result.NOT_FOUND)
             except Exception:
                 LOG.exception("Recording metadata failed")
                 return self.snapshot(request, Result.API_ERROR)

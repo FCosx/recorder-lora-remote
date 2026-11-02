@@ -24,6 +24,16 @@
     @media (prefers-reduced-motion: reduce) { button.is-busy::before { animation: none; } }
     .topic { display: block; padding: 9px 4px; border-bottom: 1px solid #edf0f2; overflow-wrap: anywhere; }
     .topic small { color: #596775; margin-left: 8px; }
+    .bandwidth-switch { display:inline-flex; align-items:center; gap:8px; font-size:.9rem; cursor:pointer; }
+    .bandwidth-switch input { width:36px; height:20px; appearance:none; margin:0; border:1px solid #a5b2bd; border-radius:12px; background:#c5ced6; position:relative; cursor:pointer; }
+    .bandwidth-switch input::after { content:""; position:absolute; width:14px; height:14px; border-radius:50%; background:white; left:2px; top:2px; transition:transform .15s; }
+    .bandwidth-switch input:checked { background:#174d80; border-color:#174d80; }
+    .bandwidth-switch input:checked::after { transform:translateX(16px); }
+    .bandwidth-switch input:focus-visible { outline:3px solid #e59a2f; outline-offset:2px; }
+    .bandwidth-switch input:disabled { opacity:.5; cursor:not-allowed; }
+    .topic-rate { margin-left:auto;white-space:nowrap;color:#174d80;font-size:.85rem;font-variant-numeric:tabular-nums; }
+    #topic-list label { display:flex;align-items:center;gap:8px; }
+    #bandwidth-note { font-size:.85rem;margin:8px 0; }
     #topics { max-height: 300px; overflow-y: auto; }
     .recording { border-top: 1px solid #edf0f2; padding: 12px 0; }
     .recording:first-child { border-top: 0; }
@@ -117,8 +127,8 @@
  <div class="row"><p id="notice" role="status" aria-live="polite">Connecting…</p><button id="dismiss-notice" class="secondary" hidden>Dismiss</button></div><p id="warning" class="warning" hidden></p>
 </section>
 <section class="card">
- <div class="row" style="justify-content:space-between"><h2>Available topics</h2><button id="refresh-topics" class="secondary" disabled>Refresh topics</button></div>
- <p id="topic-progress" class="muted" role="status">Refresh to get the topic list over LoRa.</p><div id="topic-list" class="topic-list"></div><p id="selection-count" class="muted">0 selected</p>
+ <div class="row" style="justify-content:space-between"><h2>Available topics</h2><div class="row"><label class="bandwidth-switch"><input id="auto-estimate" type="checkbox" role="switch" disabled>Auto estimate · 5 s</label><button id="refresh-topics" class="secondary" disabled>Refresh topics</button></div></div>
+ <p id="topic-progress" class="muted" role="status">Refresh to get the topic list over LoRa.</p><div id="topic-list" class="topic-list"></div><p id="selection-count" class="muted">0 selected · Estimated total: —</p><p id="bandwidth-note" class="muted" role="status">Auto estimate is off.</p>
 </section>
 <section class="card">
  <div class="row" style="justify-content:space-between"><h2>Recordings on the Pi</h2><button id="refresh-recordings" class="secondary" disabled>Refresh recordings</button></div>
@@ -127,7 +137,7 @@
 </section>
 <p id="browser-error" class="error" role="alert"></p>
 <footer>Files remain on the Pi. Losing radio contact does not stop recording.
- <details><summary>About radio updates</summary><p>Status requests wait <span id="poll-delay">1 second</span> after each reply, plus radio transmission time. The timer is a local estimate between replies. Topic lists, recording pages and details load in small radio chunks when requested. Start and Stop have priority over the next chunk.</p></details>
+ <details><summary>About radio updates</summary><p>Status requests wait <span id="poll-delay">1 second</span> after each reply, plus radio transmission time. The timer is a local estimate between replies. Topic lists, recording pages and details load in small radio chunks when requested. Optional bandwidth estimates are measured every 5 seconds on the idle Pi; their radio delivery can take longer. Start and Stop have priority over the next chunk.</p></details>
 </footer>
 <script>
 const $=id=>document.getElementById(id);
@@ -207,10 +217,24 @@ class RecordingTimer{
 const recordingTimer=new RecordingTimer();
 const feedback=new CommandFeedback();
 function updateTimer(){const value=recordingTimer.reading(),state=recordingTimer.sample?.status.state;$('elapsed').textContent=time(state==='starting'&&value.seconds==null?0:value.seconds);$('elapsed-label').textContent=value.final?'Bag duration':state==='starting'?'Preparing recorder':value.estimated?'Recording time (estimated)':'Recording time';$('timer').hidden=!['starting','recording','stopping'].includes(state)&&!value.final&&!value.pending;$('timer').classList.toggle('is-stopping',state==='stopping'||Boolean(value.final)||Boolean(value.pending))}
+let bandwidthTouchedAt=0;
+function bandwidthRate(value){if(!Number.isFinite(value)||value<0)return '—';if(value>=1024**2)return (value/1024**2).toFixed(1)+' MiB/s';if(value>=1024)return (value/1024).toFixed(1)+' KiB/s';return value.toFixed(0)+' B/s'}
+function renderBandwidth(d){
+ const rates=d.bandwidth_rates||{};let total=0,unknown=0;
+ for(const name of chosen){if(Number.isFinite(rates[name]))total+=rates[name];else unknown++}
+ const measured=chosen.size-unknown;
+ $('selection-count').textContent=`${chosen.size} selected · Estimated total: ${measured?'~'+bandwidthRate(total)+(unknown?` + ${unknown} unmeasured`:''):'—'}`;
+ for(const badge of document.querySelectorAll('.topic-rate'))badge.textContent=Number.isFinite(rates[badge.dataset.topic])?'~'+bandwidthRate(rates[badge.dataset.topic]):'—';
+ if(localAction!=='bandwidth')$('auto-estimate').checked=Boolean(d.bandwidth_enabled);
+ $('auto-estimate').disabled=sending||!d.can_start||!d.bandwidth_supported||!topicRevision||topicRevision==='0000000000000000'||d.topics_loading;
+ const stamp=d.bandwidth_measured_at;
+ $('bandwidth-note').textContent=d.bandwidth_error||(d.bandwidth_enabled?`Pi estimates every 5 s · radio updates may take longer${stamp?' · '+new Date(stamp*1000).toLocaleTimeString():' · Connecting…'}`:`Auto estimate is off.${stamp?' Last estimates shown.':''}`);
+ if(d.bandwidth_enabled&&performance.now()-bandwidthTouchedAt>5000){bandwidthTouchedAt=performance.now();fetch('/api/bandwidth',{method:'POST',headers:{'X-LoRa-Control':'__CONTROL_TOKEN__','Content-Type':'application/json'},body:JSON.stringify({enabled:true,heartbeat:true})}).catch(()=>{})}
+}
 function metadataReady(d){return !sending&&d.radio_connected&&d.synchronized!==false&&!d.pending&&!d.metadata_loading&&!d.topics_loading}
 function updateControls(d){
  $('dismiss-notice').disabled=sending||!d.radio_connected;
- $('selection-count').textContent=`${chosen.size} selected`;
+ renderBandwidth(d);
  $('start').disabled=sending||!d.can_start||d.topics_loading||chosen.size===0||topicRevision==='0000000000000000';
  $('stop').disabled=sending||!d.can_stop;
  $('split-options').disabled=sending||!d.can_start||!d.splitting_supported;
@@ -226,7 +250,7 @@ function renderTopics(d){
   topicRevision=d.topics_revision;topicNames=d.topics||[];
   if(topicRevision!=='0000000000000000')chosen=new Set([...chosen].filter(name=>topicNames.includes(name)));
   $('topic-list').replaceChildren();
-  topicNames.forEach(name=>{const label=document.createElement('label'),box=document.createElement('input'),text=document.createElement('span');box.type='checkbox';box.checked=chosen.has(name);text.textContent=name;box.onchange=()=>{box.checked?chosen.add(name):chosen.delete(name);if(lastStatus)updateControls(lastStatus)};label.append(box,text);$('topic-list').append(label)});
+  topicNames.forEach(name=>{const label=document.createElement('label'),box=document.createElement('input'),text=document.createElement('span');box.type='checkbox';box.checked=chosen.has(name);text.textContent=name;box.onchange=()=>{box.checked?chosen.add(name):chosen.delete(name);if(lastStatus)updateControls(lastStatus)};const rate=document.createElement('span');rate.className='topic-rate';rate.dataset.topic=name;label.append(box,text,rate);$('topic-list').append(label)});
  }
  const received=d.topics_received_bytes||0,total=d.topics_total_bytes;
  $('topic-progress').textContent=d.topics_loading?(total?`Loading topic list over LoRa · ${Math.floor(received/total*100)}%`:'Discovering topics on the Pi…'):(d.topics_error||((d.topics||[]).length?`${d.topics.length} topics available`:topicRevision&&topicRevision!=='0000000000000000'?'No topics available':'Refresh to get the topic list over LoRa.'));
@@ -295,6 +319,10 @@ async function command(action,extra={}){
  $('notice').textContent=`Sending ${action}…`;
  try{const r=await fetch('/api/'+action,{method:'POST',headers:{'X-LoRa-Control':'__CONTROL_TOKEN__','Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(3000)});const d=await r.json();if(!r.ok)throw Error(d.error||'Request rejected');feedback.clear();$('notice').textContent=['start','stop','delete'].includes(action)?`Sending ${action} · waiting for Pi acknowledgment…`:'Loading over LoRa…'}catch(e){feedback.fail(e.message+'; check updated status before retrying');$('notice').textContent=e.message;$('notice').className='error';$('dismiss-notice').hidden=false}finally{sending=false;localAction=null;if(action==='stop')stopRequestActive=false}
 }
+$('auto-estimate').onchange=()=>command('bandwidth',{enabled:$('auto-estimate').checked});
+window.addEventListener('pagehide',()=>{fetch('/api/bandwidth',{method:'POST',headers:{'X-LoRa-Control':'__CONTROL_TOKEN__','Content-Type':'application/json'},body:JSON.stringify({enabled:false}),keepalive:true}).catch(()=>{})});
+// Every new page starts with the optional preview off.
+fetch('/api/bandwidth',{method:'POST',headers:{'X-LoRa-Control':'__CONTROL_TOKEN__','Content-Type':'application/json'},body:JSON.stringify({enabled:false})}).catch(()=>{});
 $('dismiss-notice').onclick=()=>{feedback.dismiss();if(lastStatus)render(lastStatus)};
 $('start').onclick=()=>command('start');$('stop').onclick=()=>command('stop');$('refresh-topics').onclick=()=>command('topics');$('refresh-recordings').onclick=()=>command('recordings');$('previous-recordings').onclick=()=>command('recordings',{offset:Math.max(0,(lastStatus.recordings_offset||0)-5)});$('next-recordings').onclick=()=>command('recordings',{offset:lastStatus.recordings_next});setInterval(updateTimer,100);refresh();
 </script></body></html>
