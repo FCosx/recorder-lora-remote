@@ -42,11 +42,11 @@ Before starting, optionally set MiB and/or seconds under `Split MCAP files`. Lea
 Opening the page or clicking **Refresh topics** requests one quick robot-side bandwidth snapshot. Topics are sampled together for about one second, targeting a result within about 1–2 seconds on a healthy link. **—** means insufficient samples or a timeout, not zero. Per-topic rates and the selected total stay visible until the next refresh. LoRa delivery takes additional time. Temporary subscribers count bytes in robot RAM only, save no messages and send only metadata/results to the Pi. Starting recording from either UI waits for the robot to confirm that its temporary subscribers have closed; missing confirmation prevents recording from starting. These short receive-rate estimates do not guarantee complete delivery or sustainable storage throughput.
 ## View recordings
 
-`Refresh recordings` loads five completed recordings per page, showing their names, start times, sizes, durations and message counts. `View topics` loads topic names, message counts, average Hz and types. `Delete` requires confirmation and permanently removes the recording and all its files; it is available only while the recorder is idle. Warning/Error badges include brief reasons, with more detail under `View topics`.
+`Refresh recordings` loads all completed recordings in one list, showing their names, start times, sizes, durations and message counts. No page changes are needed. `View topics` loads topic names, message counts, average Hz and types. `Delete` requires confirmation and permanently removes the recording and all its files; it is available only while the recorder is idle. Warning/Error badges include brief reasons, with more detail under `View topics`.
 
 Lists and details load on demand in small radio chunks. Downloads are available through the local Pi page, not the LoRa page. The Pi agent must support these features; the maintainer handles its updates.
 
-After recording finishes, the remote automatically refreshes the newest page once. When metadata arrives, it briefly shows the confirmed bag duration. Live status includes the MCAP file count. Action errors stay visible until dismissed with `Dismiss` or replaced by a new action. Storage indicators distinguish ready and low-storage states.
+After recording finishes, the remote automatically refreshes the list once. When metadata arrives, it briefly shows the confirmed bag duration. Live status includes the MCAP file count. Action errors stay visible until dismissed with `Dismiss` or replaced by a new action. Storage indicators distinguish ready and low-storage states.
 
 ## Troubleshooting
 
@@ -62,7 +62,7 @@ The installer includes pySerial 3.5; see [Third-party notices](../THIRD_PARTY_NO
 
 ## Status update interval
 
-The default is a one-second wait after each reply before the next status request. Transmission and retries take additional time, so this does not guarantee a fresh update every second. The normal startup command uses this default; the page shows `1 s polling`, and the timer remains smooth between replies.
+The default is a one-second wait after each reply before the next status request. Transmission and retries take additional time, so this does not guarantee a fresh update every second. The normal startup command uses this default; the recording timer remains smooth between replies.
 
 To reduce radio traffic and leave more capacity for topic/recording lists, press Ctrl+C, then restart with a two-second wait:
 

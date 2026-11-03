@@ -73,7 +73,7 @@ class RecorderAPI:
         return self.request("/api/stop", {"expected_name": name, "wait": False}, timeout=5)
 
     def recordings(self, offset):
-        return self.request(f"/api/recording-summaries?offset={offset}", timeout=5)
+        return self.request(f"/api/recording-summaries?offset={offset}&all=1", timeout=5)
 
     def recording_info(self, name):
         if not RECORDING_NAME.fullmatch(name):

@@ -278,7 +278,7 @@ class Remote:
                 raise ValueError("Invalid recording metadata")
             if transfer["op"] == Op.RECORDINGS:
                 rows = value.get("r")
-                if (not isinstance(rows, list) or len(rows) > 5 or type(value.get("t")) is not int or value["t"] < 0
+                if (not isinstance(rows, list) or type(value.get("t")) is not int or value["t"] < 0
                         or (value.get("n") is not None and (type(value["n"]) is not int or not 0 <= value["n"] <= 65535))
                         or any(not isinstance(row, list) or len(row) != 5 or not isinstance(row[0], str)
                                or not RECORDING_NAME.fullmatch(row[0]) or not number(row[1])

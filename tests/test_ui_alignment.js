@@ -8,7 +8,7 @@ vm.runInNewContext(radio.slice(radio.indexOf('function recordedRate'),radio.inde
 let lanRate=ctx.rate;
 if(fs.existsSync(path.join(root,'index.html'))){
  const lan=fs.readFileSync(path.join(root,'index.html'),'utf8').split('<script>')[1].split('</script>')[0];new vm.Script(lan);
- const local={};vm.runInNewContext(lan.slice(lan.indexOf('function recordedRate'),lan.indexOf('function updateStatusAge'))+'\nglobalThis.rate=recordedRate;',local);lanRate=local.rate;
+ const local={};vm.runInNewContext(lan.slice(lan.indexOf('function recordedRate'),lan.indexOf('function renderStorage'))+'\nglobalThis.rate=recordedRate;',local);lanRate=local.rate;
  const notices={};vm.runInNewContext(lan.slice(lan.indexOf('function recordingWarning'),lan.indexOf('async function refreshRecordings'))+'\nglobalThis.warning=recordingWarning;',notices);
  assert.equal(notices.warning({state:'warning',data_loss:{cache_dropped:17109},message:'Detailed per-topic diagnostics '.repeat(100)}),'Warning: Data loss detected');
  assert.equal(notices.warning({state:'error',data_loss:{unflushed_messages:2},exit_code:1}),'Error: Data loss detected · Recorder exited with code 1');
@@ -39,7 +39,7 @@ const preview={chosen:new Set(['/a','/b']),$:node,document:{querySelectorAll:()=
 vm.runInNewContext(radio.slice(radio.indexOf('function bandwidthRate'),radio.indexOf('function metadataReady'))+'\nglobalThis.render=renderBandwidth;',preview);
 preview.render({bandwidth_rates:{'/a':1024},bandwidth_loading:true});
 assert.match(node('selection-count').textContent,/1.0 KiB\/s \+ 1 unmeasured/);
-assert.match(node('bandwidth-note').textContent,/Estimating on robot/);
-preview.chosen.clear();preview.render({bandwidth_rates:{},bandwidth_measured_at:123});assert.match(node('selection-count').textContent,/Select topics above/);assert.doesNotMatch(node('selection-count').textContent,/0 selected|—/);assert.match(node('bandwidth-note').textContent,/Refresh topics to check again/);
+assert.match(node('bandwidth-note').textContent,/Estimating/);
+preview.chosen.clear();preview.render({bandwidth_rates:{},bandwidth_measured_at:123});assert.equal(node('selection-count').hidden,true);assert.equal(node('selection-count').textContent,'');assert.equal(node('bandwidth-note').hidden,true);assert.equal(node('bandwidth-note').textContent,'');
 assert.doesNotMatch(radio,/auto-estimate|heartbeat:true|bandwidthTouchedAt/);
 console.log('Bandwidth alignment: units, partial totals and one-shot feedback passed.');

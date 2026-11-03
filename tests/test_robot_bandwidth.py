@@ -1,7 +1,7 @@
 """Robot-local sampling, late-message barriers and metadata transport invariants."""
 import copy
 import unittest
-from tools.robot_bandwidth import Source, Coordinator, Window, SOURCE_DEADLINE
+from tools.robot_bandwidth import Source, Coordinator, Window, SAMPLE_SECONDS, SOURCE_DEADLINE
 
 class RobotBandwidthTests(unittest.TestCase):
     def setUp(self):
@@ -21,14 +21,18 @@ class RobotBandwidthTests(unittest.TestCase):
     def test_ten_topics_sample_concurrently_and_all_readers_close_before_result(self):
         self.coordinator.command({'op':'sample','id':'one'});self.pump()
         self.assertEqual(len(self.readers),10)
-        for i in range(11):
+        for i in range(int(SAMPLE_SECONDS*10)+1):
             self.now=10+i*.1
             for callback in list(self.readers.values()):callback(bytes(100))
+            self.source.step();self.pump()
+            if i == int(SAMPLE_SECONDS*10)-1:
+                self.assertTrue(self.readers, 'Sampling must remain active until the configured window ends')
+                self.assertEqual(self.results, [])
         self.source.step();self.pump()
         self.assertEqual(self.readers,{})
         result=self.results[-1];self.assertTrue(result['closed']);self.assertEqual(len(result['topics']),10)
         for row in result['topics'].values():self.assertAlmostEqual(row['bytes_per_second'],1000)
-        self.assertLessEqual(self.now-10,1.01)
+        self.assertLessEqual(self.now-10,SAMPLE_SECONDS+.01)
         self.now+=5;self.source.step();self.coordinator.step();self.pump()
         self.assertEqual(len([v for v in self.results if 'topics' in v]),1)
 

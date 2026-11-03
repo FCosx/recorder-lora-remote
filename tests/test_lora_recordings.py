@@ -18,8 +18,8 @@ KEY = bytes(range(32))
 class SavedAPI:
     def __init__(self):
         self.value = {'state': 'idle', 'name': None, 'topics': [], 'can_start': True}
-        self.rows = [{'name': f'recording-20261029-12000{i}', 'bytes': 2048+i, 'started_at': '2026-10-29T12:00:00',
-                      'duration_seconds': 10.5, 'total_messages': 21} for i in range(7)]
+        self.rows = [{'name': f'recording-20261029-1200{i:02d}', 'bytes': 2048+i, 'started_at': '2026-10-29T12:00:00',
+                      'duration_seconds': 10.5, 'total_messages': 21} for i in range(17)]
         self.list_reads = 0
         self.deleted = []
         self.lose_delete = False
@@ -31,8 +31,8 @@ class SavedAPI:
 
     def recordings(self, offset):
         self.list_reads += 1
-        return {'recordings': self.rows[offset:offset+5], 'total': len(self.rows),
-                'next_offset': offset+5 if offset+5 < len(self.rows) else None}
+        return {'recordings': self.rows[offset:], 'total': len(self.rows),
+                'next_offset': None}
 
     def recording_info(self, name):
         return {'bag_size_bytes': 2048, 'duration_seconds': 10.5, 'total_messages': 1470, 'topics': self.topic_rows,
@@ -87,18 +87,18 @@ class RecordingRadioTests(unittest.TestCase):
 
     def test_pages_and_large_topic_details_fit_frames_and_keep_counts(self):
         self.fetch()
-        self.assertEqual(len(self.remote.recordings), 5)
-        self.assertEqual(self.remote.recordings_next, 5)
-        self.assertEqual(self.remote.recordings_total, 7)
+        self.assertEqual(len(self.remote.recordings), 17)
+        self.assertIsNone(self.remote.recordings_next)
+        self.assertEqual(self.remote.recordings_total, 17)
         name = self.remote.recordings[0][0]
         self.fetch(Op.BAG_INFO, name.encode())
         info = self.remote.recording_info[name]
         self.assertEqual(info['m'], 1470)
         self.assertEqual(len(info['topics']), 70)
         self.assertEqual(info['topics'][0][1:], [21, 'sensor_msgs/msg/Image'])
-        self.fetch(selector=(5).to_bytes(2, 'big'))
-        self.assertEqual(self.remote.recordings_offset, 5)
-        self.assertEqual(len(self.remote.recordings), 2)
+        self.fetch(selector=(10).to_bytes(2, 'big'))
+        self.assertEqual(self.remote.recordings_offset, 10)
+        self.assertEqual(len(self.remote.recordings), 7)
         self.assertIsNone(self.remote.recordings_next)
 
     def test_warning_error_and_full_details_survive_radio_without_changing_row_format(self):
@@ -111,6 +111,7 @@ class RecordingRadioTests(unittest.TestCase):
         self.api.detail_health[name] = self.detail_health
         self.fetch()
         self.assertTrue(all(len(row) == 5 for row in self.remote.recordings))
+
         self.assertEqual(self.remote.status()['recordings_health'][name], warning)
         self.assertEqual(self.remote.recordings_health[self.api.rows[1]['name']], error)
         self.assertNotIn(self.api.rows[2]['name'], self.remote.recordings_health)
@@ -120,6 +121,16 @@ class RecordingRadioTests(unittest.TestCase):
         self.fetch()
         self.assertNotIn(name, self.remote.recordings_health)
         self.assertNotIn(name, self.remote.recording_info, 'Do not retain old warning details after a refreshed summary changes')
+
+    def test_full_list_keeps_older_recordings_viewable_and_deletable(self):
+        self.fetch()
+        name=self.api.rows[-1]['name']
+        self.assertTrue(any(row[0]==name for row in self.remote.recordings))
+        self.fetch(Op.BAG_INFO,name.encode())
+        self.assertIn(name,self.remote.recording_info)
+        request=self.deletion(data=self.remote.recordings_revision+recording_token(name))
+        self.assertEqual(self.agent.handle(request).result,Result.ACCEPTED)
+        self.assertEqual(self.api.deleted,[name])
 
     def test_malformed_warning_is_rejected(self):
         self.api.rows[0]['health'] = {'state':'warning','brief':'x'*129}
@@ -132,6 +143,23 @@ class RecordingRadioTests(unittest.TestCase):
         self.assertIn('warning', self.remote.recordings_error)
         self.assertFalse(self.remote.recordings_loaded)
 
+    def test_cache_loss_warning_uses_existing_radio_summary_and_detail_frames(self):
+        try:
+            import app
+        except ImportError:
+            self.skipTest('Pi backend not part of the remote repo')
+        health = app.add_recording_loss({'state':'ok', 'message':'Bag metadata reports messages for all selected topics.'},
+                                       {'cache_dropped':17109, 'cache_dropped_by_topic':{'/camera':17109},
+                                        'unflushed_messages':0})
+        name = self.api.rows[0]['name']
+        self.api.rows[0]['health'] = app.recording_notice(health)
+        self.api.detail_health[name] = app.recording_notice(health, detail=True)
+        self.fetch()
+        self.assertEqual(self.remote.recordings_health[name]['brief'], 'Warning: Data loss detected')
+        self.fetch(Op.BAG_INFO, name.encode())
+        self.assertEqual(self.remote.recording_info[name]['h']['message'],
+                         '17,109 messages dropped from the recording buffer.')
+
     def test_confirmed_delete_only_targets_loaded_recording_and_retry_is_idempotent(self):
         self.fetch()
         name = self.api.rows[0]['name']
@@ -139,7 +167,7 @@ class RecordingRadioTests(unittest.TestCase):
         self.assertEqual(self.agent.handle(request).result, Result.ACCEPTED)
         self.assertEqual(self.agent.handle(request).result, Result.ACCEPTED)
         self.assertEqual(self.api.deleted, [name])
-        self.assertEqual(len(self.api.rows), 6)
+        self.assertEqual(len(self.api.rows), 16)
 
     def test_delete_refuses_busy_expired_restarted_and_unlisted_targets(self):
         self.fetch()
@@ -229,12 +257,12 @@ class RecorderMetadataAPITests(unittest.TestCase):
         import threading
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            for i in range(7):
+            for i in range(17):
                 bag = root/f'recording-{i}'
                 bag.mkdir(); (bag/'metadata.yaml').write_text('test-only')
                 (bag/'recording_0.mcap').write_bytes(bytes(2048))
             health = {'state':'warning','message':'No messages recorded for: /imu','topics':[{'name':'/imu','messages':0}]}
-            for i in (0,6):
+            for i in (0,9):
                 (root/f'recording-{i}'/app.HEALTH_FILE).write_text(json.dumps(health))
             metadata = SimpleNamespace(starting_time=SimpleNamespace(nanoseconds=1793260800000000000),
                 duration=SimpleNamespace(nanoseconds=10500000000), message_count=21,
@@ -249,8 +277,14 @@ class RecorderMetadataAPITests(unittest.TestCase):
                 try:
                     api = RecorderAPI(f'http://127.0.0.1:{server.server_port}')
                     page = api.recordings(0)
-                    self.assertEqual(len(page['recordings']),5)
-                    self.assertEqual(page['next_offset'],5)
+                    self.assertEqual(len(page['recordings']),17)
+                    self.assertIsNone(page['next_offset'])
+                    final_page = api.recordings(10)
+                    self.assertEqual(len(final_page['recordings']),7)
+                    self.assertIsNone(final_page['next_offset'])
+                    bounded = api.request('/api/recording-summaries?offset=0')
+                    self.assertEqual(len(bounded['recordings']),10)
+                    self.assertEqual(bounded['next_offset'],10)
                     self.assertEqual(page['recordings'][0]['duration_seconds'],10.5)
                     self.assertIsNotNone(page['recordings'][0]['started_at'])
                     self.assertEqual(page['recordings'][0]['health']['brief'],'Warning: No messages on /imu')

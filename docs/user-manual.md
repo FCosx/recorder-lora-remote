@@ -97,6 +97,8 @@ Opening the page or clicking **Refresh topics** requests one quick robot-side ba
 
 The size setting is a split trigger, not a strict file-size ceiling: buffered messages can make a segment exceed it. If both limits are set, the first reached triggers a new segment; the last is usually shorter. `Ready to record` confirms that the service is available. Confirm received data using the completed recording's message counts and result. Files remain on the Pi unless a user downloads a copy.
 
+The local recording list shows 10 recordings per page; use **Previous** and **Next** for more. Available topics use an internal scrollbar; selecting topics shows their combined bandwidth.
+
 ## Optional enhancement: LoRa remote control
 
 Add compatible LoRa radios and an operator laptop for topic selection, Start/Stop, status and brief recording management from a distance. Follow the [LoRa Remote Guide](lora-remote.md). The installer can be supplied offline by the maintainer or downloaded from [GitHub](https://github.com/FCosx/recorder-lora-remote). The maintainer supplies the initial pairing passcode privately.

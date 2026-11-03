@@ -4,7 +4,8 @@ import time
 import unittest
 from pathlib import Path
 from dataclasses import replace
-from lora.agent import Agent, Journal
+from lora.agent import Agent, Journal, RecorderAPI
+from unittest.mock import patch
 from lora.protocol import CATALOG_REQUEST, MAX_FRAME, Op, Request, Result, State, ZERO
 from lora.remote import Remote
 
@@ -21,6 +22,19 @@ class API:
                 'topics':{} if self.measuring else {f'/camera_{i}':{'bytes_per_second':None if i==0 else i*100003} for i in range(100)}}
 
 class LoRaBandwidthTests(unittest.TestCase):
+    def test_pi_agent_can_return_completed_sample_in_first_reply(self):
+        clock=[0.0];calls=[]
+        api=RecorderAPI()
+        def request(path,body=None,timeout=3):
+            calls.append(body)
+            return {'state':'complete' if clock[0]>=1.2 else 'measuring'}
+        def sleep(seconds):clock[0]+=seconds
+        api.request=request
+        with patch('lora.agent.time.monotonic',side_effect=lambda:clock[0]),patch('lora.agent.time.sleep',side_effect=sleep):
+            self.assertEqual(api.bandwidth('sample')['state'],'complete')
+        self.assertEqual(sum(body is not None for body in calls),1)
+        self.assertLess(clock[0],1.5)
+
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
         self.api=API();self.journal=Journal(Path(self.tmp.name)/'pi.db');self.addCleanup(self.journal.close)
