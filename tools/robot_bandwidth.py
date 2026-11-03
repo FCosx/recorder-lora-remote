@@ -21,6 +21,7 @@ MAX_TOPICS = 100
 SAMPLE_SECONDS = 1.0
 SOURCE_DEADLINE = 1.6
 REQUEST_DEADLINE = 2.0
+LINK_TIMEOUT_SECONDS = 4.0
 
 
 def visible(name):
@@ -175,6 +176,7 @@ class Coordinator:
         self.pending = {}
         self.used_sources = set()
         self.next_discover = 0
+        self.next_link_report = 0
 
     def finish(self, job, **data):
         self.pending.pop(job['seq'], None)
@@ -207,7 +209,7 @@ class Coordinator:
         op, identity = value.get('op'), value.get('id')
         if op not in ('sample', 'stop') or not isinstance(identity, str):
             return
-        fresh = {source for source, peer in self.peers.items() if self.clock() - peer['seen'] < 4}
+        fresh = {source for source, peer in self.peers.items() if self.clock() - peer['seen'] < LINK_TIMEOUT_SECONDS}
         if op == 'sample':
             if self.clock() >= value.get('expires', self.clock()+REQUEST_DEADLINE):
                 self.emit({'id': identity, 'closed': not self.used_sources, 'error': 'Rate snapshot timed out'})
@@ -237,6 +239,12 @@ class Coordinator:
 
     def step(self):
         now = self.clock()
+        if now >= self.next_link_report:
+            # Reuse existing presence traffic. This is a tiny local pipe report,
+            # not a new ROS publication, sensor reader or recording-path probe.
+            fresh = any(now - peer['seen'] < LINK_TIMEOUT_SECONDS for peer in self.peers.values())
+            self.emit({'robot_link': 'connected' if fresh else 'lost' if self.peers else 'unknown'})
+            self.next_link_report = now + 1
         for job in list(self.pending.values()):
             if now >= job['deadline']:
                 self.finish(job, closed=False, error='Robot rate helper did not confirm stopping' if job['op'] == 'stop'

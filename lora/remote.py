@@ -108,6 +108,7 @@ class Remote:
             data = self.latest.as_dict() if self.latest else {"state": "unknown"}
             if self.latest and self.segment_sample and self.segment_sample[:2] == (self.latest.boot, self.latest.recording):
                 data["segment_count"] = self.segment_sample[2]
+                data['robot_link'], data['robot_link_interrupted'] = self.segment_sample[3:]
             completed_age = None if self.completed_at is None else max(0, time.monotonic() - self.completed_at)
             return {
                 "radio_connected": online, "age_seconds": age,
@@ -402,7 +403,9 @@ class Remote:
             self.completed_recording = None
             self.completed_at = None
         if response.op == Op.STATUS:
-            self.segment_sample = (response.boot, response.recording, response.as_dict()["segment_count"])
+            telemetry = response.as_dict()
+            self.segment_sample = (response.boot, response.recording, telemetry['segment_count'],
+                                   telemetry['robot_link'], telemetry['robot_link_interrupted'])
         if self.latest is not None and self.latest.boot != response.boot and response.op != Op.SYNC:
             self.synchronized = False
         self.latest = response

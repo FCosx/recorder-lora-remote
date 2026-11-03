@@ -31,6 +31,7 @@ CATALOG_RESPONSE = struct.Struct("!8sHH")
 SYNC_RESPONSE = struct.Struct("!16sQ")
 SPLIT_LIMITS = struct.Struct("!II")
 STATUS_SEGMENTS = struct.Struct("!H")
+STATUS_TELEMETRY = struct.Struct("!HB")  # Existing count plus one link-warning byte.
 MAX_SPLIT_SIZE_MIB = 1024 * 1024
 MAX_SPLIT_DURATION_SECONDS = 7 * 24 * 60 * 60
 RECORDING_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}\Z")
@@ -244,7 +245,14 @@ class Response:
                    data=payload[offset + size:])
 
     def as_dict(self):
-        segments = STATUS_SEGMENTS.unpack(self.data)[0] if self.op == Op.STATUS and len(self.data) == STATUS_SEGMENTS.size else 65535
+        segments, link = 65535, 0
+        if self.op == Op.STATUS:
+            if len(self.data) == STATUS_TELEMETRY.size:
+                segments, link = STATUS_TELEMETRY.unpack(self.data)
+                if link & ~7 or link & 3 == 3:
+                    link = 0
+            elif len(self.data) == STATUS_SEGMENTS.size:
+                segments = STATUS_SEGMENTS.unpack(self.data)[0]
         return {
             "state": self.state.name.lower(), "name": self.name or None,
             "elapsed_seconds": None if self.elapsed_ms == UNKNOWN32 else self.elapsed_ms / 1000,
@@ -254,6 +262,8 @@ class Response:
             "temperature_c": None if self.temperature_tenths == 32767 else self.temperature_tenths / 10,
             "topic_count": self.topic_count, "storage_warning": bool(self.flags & 1),
             "segment_count": None if segments == 65535 else segments,
+            "robot_link": {0: 'unknown', 1: 'connected', 2: 'lost'}.get(link & 3, 'unknown'),
+            "robot_link_interrupted": bool(link & 4),
             "can_start": bool(self.flags & 2), "last_recording_warning": bool(self.flags & 4),
             "last_recording_error": bool(self.flags & 8),
             "bandwidth_supported": bool(self.flags & 128),

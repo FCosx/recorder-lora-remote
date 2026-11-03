@@ -17,7 +17,7 @@ from urllib.request import ProxyHandler, Request as HTTPRequest, build_opener
 from .common import SerialLink
 from .protocol import (
     CATALOG_REQUEST, CATALOG_RESPONSE, COMMAND_LIFETIME, MAX_PAYLOAD, RESPONSE,
-    RECORDING_NAME, SPLIT_LIMITS, STATUS_SEGMENTS, SYNC_RESPONSE, UNKNOWN32, UNKNOWN64, ZERO, Op, Request, Response, Result, State, recording_token, split_limits,
+    RECORDING_NAME, SPLIT_LIMITS, STATUS_TELEMETRY, SYNC_RESPONSE, UNKNOWN32, UNKNOWN64, ZERO, Op, Request, Response, Result, State, recording_token, split_limits,
 )
 
 
@@ -330,7 +330,11 @@ class Agent:
             temperature = 32767
         elapsed = status.get("elapsed_seconds")
         segments = status.get("segment_count")
-        segment_data = STATUS_SEGMENTS.pack(segments if type(segments) is int and 0 <= segments < 65535 else 65535) if request.op == Op.STATUS else b""
+        link = {'connected': 1, 'lost': 2}.get(status.get('robot_link'), 0)
+        interruptions = status.get('robot_link_interruptions', 0)
+        if type(interruptions) is int and interruptions > 0:
+            link |= 4
+        segment_data = STATUS_TELEMETRY.pack(segments if type(segments) is int and 0 <= segments < 65535 else 65535, link) if request.op == Op.STATUS else b""
         return Response(
             request.op, request.number, result, state, flags,
             unsigned(None if elapsed is None else elapsed * 1000, UNKNOWN32),

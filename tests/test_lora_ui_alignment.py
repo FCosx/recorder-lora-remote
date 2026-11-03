@@ -18,10 +18,10 @@ class AlignmentTests(unittest.TestCase):
     def snapshot(self,state='idle',name=None,segments=None):
         self.api.value.update(state=state,name=name,segment_count=segments)
         return self.agent.handle(Request(Op.STATUS,1))
-    def test_segment_count_is_two_bytes_and_survives_interleaved_metadata(self):
+    def test_compact_status_survives_interleaved_metadata(self):
         name=self.api.rows[0]['name']
         status=self.snapshot('recording',name,7)
-        self.assertEqual(len(status.data),2)
+        self.assertEqual(len(status.data),3)
         self.assertLessEqual(len(status.encode(bytes(32))),MAX_FRAME)
         self.assertEqual(Response.decode(status.encode(bytes(32)),bytes(32)).as_dict()['segment_count'],7)
         self.remote.accept_snapshot(status)

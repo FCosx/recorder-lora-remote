@@ -55,6 +55,7 @@
     pre { white-space: pre-wrap; overflow-wrap: anywhere; background: #eef2f5; padding: 14px; border-radius: 8px; }
     #message { min-height: 1.5em; }
     .error { color: #a01818; }
+    .connection-warning { color:#744600; background:#fff2d6; border-radius:5px; padding:6px 10px; margin:6px 0; font-size:.85rem; }
     .health { overflow-wrap: anywhere; white-space: pre-wrap; margin-top: 14px; padding: 12px; border-radius: 8px; background: #eef2f5; }
     .health.warning { color: #744600; background: #fff2d6; }
     .health.error { color: #a01818; background: #fdeaea; }
@@ -102,6 +103,7 @@
 <section class="card">
  <div class="row" style="justify-content:space-between"><h2>Status</h2><div class="row"><span id="link" class="badge">Waiting for radio</span><div class="status-updates"><span id="cpu-temp">CPU temperature: —</span></div></div></div>
  <div id="status" class="recorder-status"><strong id="state">Connecting to recorder…</strong><span id="name">Waiting for Pi status.</span></div>
+ <p id="robot-link-warning" class="connection-warning" role="status" hidden></p>
  <div id="timer" class="recording-timer" role="timer" hidden><div class="timer-heading"><span class="timer-dot" aria-hidden="true"></span><span id="elapsed-label">Recording time</span></div><strong id="elapsed" class="timer-value">—</strong></div>
  <div class="storage-metrics">
   <div id="free-space-card" class="storage-metric"><span class="storage-label">Pi free space</span><strong id="free" class="storage-value">—</strong><span id="total" class="storage-detail">Storage unavailable</span><meter id="storage-meter" class="storage-meter" min="0" max="100" value="0" optimum="100" aria-label="Available Pi storage" hidden></meter><p id="storage-notice" class="storage-notice" role="status" hidden></p></div>
@@ -140,6 +142,12 @@ function bytes(n){if(n==null)return '—';const units=['B','KiB','MiB','GiB'];le
 function time(n){if(n==null)return '—';const s=Math.floor(n);return [Math.floor(s/3600),Math.floor(s/60)%60,s%60].map(v=>String(v).padStart(2,'0')).join(':')}
 function duration(n){return n==null?'—':n.toFixed(1)+' s'}
 function count(n){return n==null?'—':n.toLocaleString()}
+function robotLinkWarning(data) {
+ const active=['starting','recording','stopping'].includes(data.state);
+ if(data.robot_link==='lost')return 'Robot link unavailable'+(active&&data.state!=='stopping'?' · recording continues':'');
+ if(active&&(data.robot_link_interruptions>0||data.robot_link_interrupted))return 'Robot link interrupted during recording';
+ return '';
+}
 function recordedRate(messages, seconds) {
  if(!Number.isFinite(messages)||messages<0||!Number.isFinite(seconds)||seconds<=0)return '—';
  const rate=messages/seconds;
@@ -281,6 +289,7 @@ function render(d){
  const s=d.status,live=d.radio_connected;
  $('link').textContent=live?'Radio connected':d.age_seconds==null?'Waiting for radio':'Radio contact lost';$('link').className='badge '+(live?'good':'bad');
  const view=statusPresentation(d);$('state').textContent=view.title;$('status').className='recorder-status is-'+view.kind;$('name').textContent=view.detail;
+ const linkWarning=live?robotLinkWarning(s):'';$('robot-link-warning').hidden=!linkWarning;$('robot-link-warning').textContent=linkWarning;
  $('bag').textContent=bytes(s.bag_bytes);$('free').textContent=bytes(s.free_bytes);$('total').textContent=s.total_bytes==null?'Storage unavailable':`of ${bytes(s.total_bytes)} total`;
  const available=Number.isFinite(s.free_bytes)&&Number.isFinite(s.total_bytes)&&s.total_bytes>0,critical=available&&!s.can_start;
  $('free-space-card').classList.toggle('is-warning',available&&s.storage_warning&&!critical);$('free-space-card').classList.toggle('is-critical',critical);
@@ -296,7 +305,7 @@ function render(d){
  const warnings=[];if(s.storage_warning&&!available)warnings.push('Pi storage is low');if(s.last_recording_error)warnings.push('Previous recording reported an error; inspect it on the Pi');else if(s.last_recording_warning)warnings.push('Previous recording reported a warning; inspect it on the Pi');$('warning').hidden=!warnings.length;$('warning').textContent=warnings.join(' · ');
 }
 let initialTopicRefresh=false;
-async function refresh(){try{const r=await fetch('/api/status',{signal:AbortSignal.timeout(3000)});if(!r.ok)throw Error('Status unavailable');const d=await r.json();render(d);$('browser-error').textContent='';if(!initialTopicRefresh&&d.radio_connected&&d.synchronized&&!d.pending){initialTopicRefresh=true;if(d.can_start&&metadataReady(d))command('topics')}}catch(e){recordingTimer.pause();updateTimer();document.querySelectorAll('button').forEach(button=>button.disabled=true);$('link').textContent='Local controller unavailable';$('link').className='badge bad';$('state').textContent='Status outdated';$('browser-error').textContent='Cannot reach this laptop’s LoRa controller. Keep its terminal running.'}finally{setTimeout(refresh,1000)}}
+async function refresh(){try{const r=await fetch('/api/status',{signal:AbortSignal.timeout(3000)});if(!r.ok)throw Error('Status unavailable');const d=await r.json();render(d);$('browser-error').textContent='';if(!initialTopicRefresh&&d.radio_connected&&d.synchronized&&!d.pending){initialTopicRefresh=true;if(d.can_start&&metadataReady(d))command('topics')}}catch(e){$('robot-link-warning').hidden=true;recordingTimer.pause();updateTimer();document.querySelectorAll('button').forEach(button=>button.disabled=true);$('link').textContent='Local controller unavailable';$('link').className='badge bad';$('state').textContent='Status outdated';$('browser-error').textContent='Cannot reach this laptop’s LoRa controller. Keep its terminal running.'}finally{setTimeout(refresh,1000)}}
 async function command(action,extra={}){
  if(action==='start'&&![$('split-size'),$('split-duration')].every(input=>input.reportValidity())){feedback.fail('Enter a whole positive MiB or seconds value, or leave the split limit blank.');render(lastStatus);return;}
  sending=true;localAction=action;feedback.begin(`Sending ${action}…`);if(action==='stop'){stopRequestActive=true;recordingTimer.pause();updateTimer()}if(lastStatus)updateControls(lastStatus);
