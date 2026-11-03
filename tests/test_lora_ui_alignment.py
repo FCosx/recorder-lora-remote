@@ -5,7 +5,7 @@ from dataclasses import replace
 from unittest.mock import patch
 from lora.agent import Agent,Journal
 from lora.remote import Remote
-from lora.protocol import MAX_FRAME,Op,Request,Response,State,STATUS_SEGMENTS,recording_token
+from lora.protocol import MAX_FRAME,Op,Request,Response,State,STATUS_SEGMENTS,JSONTransfer,recording_token
 from test_lora_recordings import SavedAPI
 import test_lora_recordings as recording_tests
 
@@ -63,6 +63,62 @@ class AlignmentTests(unittest.TestCase):
             helper.remote.completed_at=time.monotonic()-11
             self.assertIsNone(helper.remote.status()['completed_recording'])
         finally:helper.doCleanups()
+    def test_new_recording_cancels_old_completion_and_ignores_inflight_chunk(self):
+        old,new=[row['name'] for row in self.api.rows[:2]]
+        self.remote.accept_snapshot(self.snapshot('recording',old,1))
+        self.remote.accept_snapshot(self.snapshot())
+        transfer=JSONTransfer()
+        self.remote.completion_refresh_due=False
+        self.remote.data_transfer={'op':Op.RECORDINGS,'selector':bytes(2),'name':None,
+                                   'transfer':transfer,'completion':True}
+        first=self.agent.handle(Request(Op.RECORDINGS,10,data=transfer.request()+bytes(2)))
+        self.remote.accept_snapshot(first);self.remote.accept_metadata(first)
+        self.assertIsNotNone(self.remote.data_transfer,'Exercise a partially received catalog')
+        self.snapshot('recording',new,1)
+        delayed=self.agent.handle(Request(Op.RECORDINGS,11,data=transfer.request()+bytes(2)))
+        # The worker accepts the live snapshot before consuming this old chunk.
+        self.remote.accept_snapshot(delayed);self.remote.accept_metadata(delayed)
+        self.assertFalse(self.remote.status()['completion_pending'])
+        self.assertIsNone(self.remote.completion_target)
+        self.assertIsNone(self.remote.completed_recording)
+        self.assertIsNone(self.remote.data_transfer)
+        self.assertFalse(self.remote.recordings_loaded,'Discard the canceled automatic catalog')
+        self.remote.accept_snapshot(self.snapshot())
+        self.assertEqual(self.remote.completion_target,new,'The next completion belongs to the new session')
+        transfer=JSONTransfer()
+        self.remote.completion_refresh_due=False
+        self.remote.data_transfer={'op':Op.RECORDINGS,'selector':bytes(2),'name':None,
+                                   'transfer':transfer,'completion':True}
+        for number in range(12,1000):
+            response=self.agent.handle(Request(Op.RECORDINGS,number,data=transfer.request()+bytes(2)))
+            self.remote.accept_snapshot(response);self.remote.accept_metadata(response)
+            if self.remote.data_transfer is None:break
+        self.assertEqual(self.remote.status()['completed_recording']['name'],new)
+        self.assertFalse(self.remote.status()['completion_pending'])
+    def test_active_states_clear_saved_completion_but_preserve_manual_details(self):
+        old,new=[row['name'] for row in self.api.rows[:2]]
+        for state in ('starting','recording','stopping'):
+            with self.subTest(state=state):
+                self.remote.accept_snapshot(self.snapshot())
+                self.remote.completed_recording={'name':old,'duration_seconds':10.5,'messages':21}
+                self.remote.completed_at=time.monotonic()
+                self.remote.completion_target=old;self.remote.completion_refresh_due=True
+                manual={'op':Op.BAG_INFO,'selector':old.encode(),'name':old,'transfer':JSONTransfer()}
+                self.remote.data_transfer=manual
+                self.remote.accept_snapshot(self.snapshot(state,new,1))
+                self.assertIs(self.remote.data_transfer,manual,'Keep explicit View topics requests')
+                self.assertFalse(self.remote.status()['completion_pending'])
+                self.assertIsNone(self.remote.status()['completed_recording'])
+                self.assertIsNone(self.remote.completed_at)
+    def test_reboot_discards_automatic_completion_transfer(self):
+        old=self.api.rows[0]['name']
+        self.remote.accept_snapshot(self.snapshot('recording',old,1))
+        self.remote.accept_snapshot(self.snapshot())
+        self.remote.data_transfer={'op':Op.RECORDINGS,'selector':bytes(2),'name':None,
+                                   'transfer':JSONTransfer(),'completion':True}
+        self.remote.accept_snapshot(replace(self.snapshot(),boot=b'new-boot'))
+        self.assertIsNone(self.remote.data_transfer)
+        self.assertFalse(self.remote.status()['completion_pending'])
     def test_lan_summary_and_temperature_reading(self):
         try:import app
         except ImportError:self.skipTest('Pi backend not in standalone remote repo')

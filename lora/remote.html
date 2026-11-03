@@ -179,8 +179,8 @@ class CommandFeedback{
   const command=d.last_command;
   const failed=command&&!['ok','accepted','already_idle'].includes(command.result);
   if(command&&this.commandKey!==this.dismissed&&(failed||now-this.commandAt<6000))return {text:`${command.action==='start'?'Start':command.action==='stop'?'Stop':'Delete'}: ${command.message}`,kind:failed?'error':'success',dismissible:Boolean(failed)};
-  if(d.completion_pending)return {text:'Recording finished · fetching final bag details…',kind:'info'};
-  if(d.completed_recording)return {text:`${d.completed_recording.name} saved · ${count(d.completed_recording.messages)} messages`,kind:'success'};
+  if(d.status.state==='idle'&&d.completion_pending)return {text:'Recording finished · fetching final bag details…',kind:'info'};
+  if(d.status.state==='idle'&&d.completed_recording)return {text:`${d.completed_recording.name} saved · ${count(d.completed_recording.messages)} messages`,kind:'success'};
   if(d.topics_loading||d.metadata_loading)return {text:'Loading over LoRa…',kind:'info'};
   return {text:d.status.state==='idle'&&!d.status.can_start?'Free up space on the Pi before starting.':'Ready for a command',kind:'info'};
  }

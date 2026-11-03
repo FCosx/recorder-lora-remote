@@ -380,14 +380,20 @@ class Remote:
 
     def accept_snapshot(self, response):
         previous = self.latest
-        if response.state != State.IDLE or (previous is not None and previous.boot != response.boot):
+        restarted = previous is not None and previous.boot != response.boot
+        if response.state != State.IDLE or restarted:
             self.bandwidth_enabled = False
             self.bandwidth_transfer = None
-        if previous is not None and previous.boot != response.boot:
+            # Completion belongs to the last idle session. A new LAN/LoRa
+            # recording (or Pi reboot) supersedes it, including a catalog
+            # chunk already in flight. Keep explicitly requested bag details.
             self.completion_target = None
             self.completion_refresh_due = False
             self.completed_recording = None
             self.completed_at = None
+            if self.data_transfer and self.data_transfer.get("completion"):
+                self.data_transfer = None
+        if restarted:
             self.segment_sample = None
         elif (previous is not None and previous.name and previous.state in (State.STARTING, State.RECORDING, State.STOPPING)
               and response.state == State.IDLE and response.flags & 16):

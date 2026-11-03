@@ -35,7 +35,7 @@ Open **http://127.0.0.1:8081** in **that laptop's browser**. Wait for `Radio con
 
 By default, status requests wait one second after each reply, plus radio transmission time. The recording timer advances locally and is marked as estimated; size and free space use the latest Pi reply.
 
-Before starting, optionally set MiB and/or seconds under `Split MCAP files`. Leave blank to disable splitting. If both limits are set, the first reached starts a new segment; all segments belong to one recording. CPU temperature and the age of the last status update appear at the upper right.
+Before starting, optionally set MiB and/or seconds under `Split MCAP files`. Leave blank to disable splitting. If both limits are set, the first reached starts a new segment; all segments belong to one recording. CPU temperature appears at the upper right.
 
 ## Bandwidth preview
 
@@ -46,7 +46,7 @@ Opening the page or clicking **Refresh topics** requests one quick robot-side ba
 
 Lists and details load on demand in small radio chunks. Downloads are available through the local Pi page, not the LoRa page. The Pi agent must support these features; the maintainer handles its updates.
 
-After recording finishes, the remote automatically refreshes the list once. When metadata arrives, it briefly shows the confirmed bag duration. Live status includes the MCAP file count. Action errors stay visible until dismissed with `Dismiss` or replaced by a new action. Storage indicators distinguish ready and low-storage states.
+After recording finishes, the remote automatically refreshes the list once. When metadata arrives, it briefly shows the confirmed bag duration. Starting another recording clears the previous completion feedback. Live status includes the MCAP file count. Action errors stay visible until dismissed with `Dismiss` or replaced by a new action. Storage indicators distinguish ready and low-storage states.
 
 ## Troubleshooting
 

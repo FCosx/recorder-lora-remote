@@ -21,6 +21,17 @@ assert.equal(ctx.view({...status,radio_connected:false}).kind,'offline');
 assert.equal(ctx.view({...status,pending:'start'}).title,'Preparing to record');
 assert.equal(ctx.view({...status,status:{state:'recording'},pending:'stop'}).kind,'stopping');
 assert.equal(ctx.view({...status,status:{state:'recording'}}).title,'Recording in progress');
+for(const state of ['starting','recording','stopping']){
+ const feedback=new ctx.Feedback();
+ const active={...status,status:{state,name:'recording-new'},completion_pending:true,
+   completed_recording:{name:'recording-old',messages:21},metadata_loading:true};
+ feedback.observe(active,0);
+ assert.doesNotMatch(feedback.reading(active,10000).text,/Recording finished|recording-old saved/,
+   'Prior completion must never describe an active session');
+}
+const idleCompletion=new ctx.Feedback();
+assert.match(idleCompletion.reading({...status,completion_pending:true},0).text,/Recording finished/);
+assert.match(idleCompletion.reading({...status,completed_recording:{name:'recording-old',messages:21}},0).text,/recording-old saved/);
 const f=new ctx.Feedback();f.observe(status,0);f.fail('Invalid split size');
 for(const now of [1000,10000,100000]){f.observe(status,now);assert.equal(f.reading(status,now).text,'Invalid split size','Polling must not overwrite validation errors')}
 f.dismiss();assert.equal(f.reading(status,100000).text,'Ready for a command');
