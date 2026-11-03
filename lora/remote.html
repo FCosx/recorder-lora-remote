@@ -94,7 +94,7 @@
 #notice{min-height:1.5em;margin-bottom:0}.warning{color:#744600}#warning,#browser-error{margin-bottom:0}
 .topic-list label{display:flex;gap:9px;padding:9px 4px;border-bottom:1px solid #edf0f2;overflow-wrap:anywhere}.topic-list input{flex-shrink:0;margin-top:4px}
 .recording-meta{display:flex;gap:6px 14px;flex-wrap:wrap;font-size:.85rem;margin:6px 0 10px;color:#596775}.recording-actions{display:flex;gap:10px}.recording-actions button{padding:8px 12px}
-#recordings-progress,#topic-progress,#age,#cpu-temp{font-size:.875rem}#recordings-progress{min-height:1.3em}.pager{display:flex;gap:10px;align-items:center;margin-top:14px}.pager[hidden]{display:none}summary{cursor:pointer}.card h2{margin-bottom:0}.card>h2{margin-bottom:12px}.bag-topic-panel p{margin:0 0 10px}.recording-title{margin:0}.bag-topic-table{font-size:.9rem}footer{font-size:.8rem;color:#596775;margin:18px 0}footer p{margin:6px 0}
+#recordings-progress,#topic-progress,#age,#cpu-temp{font-size:.875rem}#recordings-progress{min-height:1.3em}summary{cursor:pointer}.card h2{margin-bottom:0}.card>h2{margin-bottom:12px}.bag-topic-panel p{margin:0 0 10px}.recording-title{margin:0}.bag-topic-table{font-size:.9rem}footer{font-size:.8rem;color:#596775;margin:18px 0}footer p{margin:6px 0}
 .status-updates{display:flex;flex-direction:column;align-items:flex-end;gap:3px;text-align:right}.status-updates #cpu-temp{font-weight:650;color:#435364}
 </style></head><body>
 <h1>Robot Recorder <span class="badge">LoRa remote</span></h1>
@@ -129,7 +129,7 @@
 </section>
 <p id="browser-error" class="error" role="alert"></p>
 <footer>Files remain on the Pi. Losing radio contact does not stop recording.
- <details><summary>About radio updates</summary><p>The timer is a local estimate between replies. Topic lists, recording pages and details load in small radio chunks when requested. Refreshing topics also requests one short robot-side rate estimate; radio delivery can take longer. Start and Stop have priority over the next chunk.</p></details>
+ <details><summary>About radio updates</summary><p>The timer is a local estimate between replies. Topic lists, recording lists and details load in small radio chunks when requested. Refreshing topics also requests one short robot-side rate estimate; radio delivery can take longer. Start and Stop have priority over the next chunk.</p></details>
 </footer>
 <script>
 const $=id=>document.getElementById(id);
@@ -271,7 +271,7 @@ function renderRecordings(d){
    }
    $('recordings').append(article);
   }
-  if(d.recordings_loaded&&!(d.recordings||[]).length)$('recordings').append(textNode('p','No recordings on this page.','muted'));
+  if(d.recordings_loaded&&!(d.recordings||[]).length)$('recordings').append(textNode('p','No recordings on the Pi.','muted'));
  }
  $('recordings-progress').textContent=d.metadata_loading?`${d.metadata_name?'Loading topic details':'Loading recordings'} over LoRa · ${d.metadata_progress||0}%`:d.recordings_error||(!d.recording_management?'Recording management needs an updated Pi LoRa agent.':d.recordings_loaded?`${d.recordings_total} ${d.recordings_total===1?'recording':'recordings'} on the Pi · Refresh to update this list.`:'Refresh to load recordings over LoRa.');
  $('refresh-recordings').textContent=d.metadata_loading&&!d.metadata_name?'Refreshing…':feedback.recentJob('recordings')?'List updated ✓':'Refresh recordings';$('refresh-recordings').classList.toggle('is-success',!d.metadata_loading&&feedback.recentJob('recordings'));$('refresh-recordings').classList.toggle('is-busy',Boolean(d.metadata_loading&&!d.metadata_name));
