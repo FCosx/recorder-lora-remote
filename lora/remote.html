@@ -144,7 +144,7 @@ function duration(n){return n==null?'—':n.toFixed(1)+' s'}
 function count(n){return n==null?'—':n.toLocaleString()}
 function robotLinkWarning(data) {
  const active=['starting','recording','stopping'].includes(data.state);
- if(data.robot_link==='lost')return 'Robot link unavailable'+(active&&data.state!=='stopping'?' · recording continues':'');
+ if(data.robot_link==='lost')return 'Robot connection unavailable'+(active&&data.state!=='stopping'?' · recording continues':'');
  if(active&&(data.robot_link_interruptions>0||data.robot_link_interrupted))return 'Robot link interrupted during recording';
  return '';
 }
