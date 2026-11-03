@@ -6,6 +6,7 @@ A ROS 2 data recorder for robot experiments. Robots send topics to a Raspberry P
 
 ## Main features
 
+- Optional MinIO uploads: indexed MCAP Zstandard compression, automatic idle/manual modes, verified-upload badges; recording takes priority.
 - Discover and select ROS 2 topics to record.
 - Start and stop recording; split MCAP files by size or duration.
 - Inspect recording size, duration, topic message counts and average Hz; download or delete recordings.

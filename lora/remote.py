@@ -14,7 +14,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from .common import SerialLink
-from .protocol import CATALOG_REQUEST, CATALOG_RESPONSE, JSONTransfer, RECORDING_NAME, SPLIT_LIMITS, SYNC_RESPONSE, ZERO, Op, Request, Response, Result, RESULT_TEXT, State, recording_token, split_limits
+from .protocol import CLOUD_PHASES, CATALOG_REQUEST, CATALOG_RESPONSE, JSONTransfer, RECORDING_NAME, SPLIT_LIMITS, SYNC_RESPONSE, ZERO, Op, Request, Response, Result, RESULT_TEXT, State, recording_token, split_limits
 
 
 LOG = logging.getLogger(__name__)
@@ -78,6 +78,11 @@ class Remote:
         self.topic_error = None
         self.recordings = []
         self.recordings_health = {}
+        self.recordings_upload = {}
+        self.cloud = None
+        self.cloud_transfer = None
+        self.upload_revision = None
+        self.next_cloud_update = 0
         self.recordings_revision = ZERO
         self.recordings_total = 0
         self.recordings_offset = 0
@@ -133,6 +138,7 @@ class Remote:
                 "bandwidth_error": self.bandwidth_error,
                 "bandwidth_loading": self.bandwidth_enabled,
                 "recordings": self.recordings, "recordings_revision": self.recordings_revision.hex(),
+                "recordings_upload": self.recordings_upload, "cloud": self.cloud if online else None,
                 "recordings_health": self.recordings_health,
                 "recordings_total": self.recordings_total, "recordings_next": self.recordings_next,
                 "recordings_offset": self.recordings_offset,
@@ -263,6 +269,23 @@ class Remote:
             self.pending, self.delete_target = "delete", name
             self.queue.put_nowait((Op.DELETE, self.latest, self.recordings_revision + recording_token(name)))
 
+    def upload_recording(self, name, revision):
+        with self.lock:
+            self.check_metadata_ready()
+            if (not self.cloud or not self.cloud.get('configured') or revision != self.recordings_revision.hex()
+                    or not isinstance(name, str) or not any(row[0] == name for row in self.recordings)):
+                raise ValueError('Refresh recordings and select a bag to upload')
+            self.pending, self.delete_target = 'upload', name
+            self.queue.put_nowait((Op.UPLOAD, self.latest, self.recordings_revision + recording_token(name)))
+
+    def set_upload_mode(self, mode):
+        with self.lock:
+            self.check_metadata_ready()
+            if mode not in ('manual', 'automatic') or not self.cloud or not self.cloud.get('configured'):
+                raise ValueError('Cloud upload is not configured')
+            self.pending = 'cloud'
+            self.queue.put_nowait((Op.UPLOAD_MODE, self.latest, bytes([int(mode == 'automatic')])))
+
     def accept_metadata(self, response):
         transfer = self.data_transfer
         if transfer is None:
@@ -294,6 +317,20 @@ class Remote:
                 self.recording_info = {name: info for name, info in self.recording_info.items()
                                        if any(row[0] == name for row in rows)
                                        and self.recordings_health.get(name) == health.get(name)}
+                uploads = value.get('u', {})
+                if isinstance(uploads, list):
+                    if len(uploads) != len(rows):
+                        raise ValueError('Invalid upload states')
+                    uploads = {row[0]: {'state': state, 'progress': 100 if state == 'uploaded' else 0}
+                               for row, state in zip(rows, uploads) if state is not None}
+                if not isinstance(uploads, dict) or not set(uploads).issubset({row[0] for row in rows}):
+                    raise ValueError('Invalid upload states')
+                for upload in uploads.values():
+                    if not isinstance(upload, dict) or upload.get('state') not in ('queued','compressing','uploading','verifying','paused','uploaded','error'):
+                        raise ValueError('Invalid upload state')
+                self.upload_revision = None
+                self.cloud_transfer = None
+                self.recordings_upload = uploads
                 self.recordings = rows
                 self.recordings_health = health
                 self.recordings_revision = transfer["transfer"].revision
@@ -323,6 +360,37 @@ class Remote:
         except (ValueError, zlib.error, KeyError, TypeError) as error:
             self.recordings_error = str(error)
             self.data_transfer = None
+
+    def next_cloud_request(self):
+        if (not self.cloud or not self.recordings_loaded or self.pending or
+                self.cloud.get('revision') == self.upload_revision or time.monotonic() < self.next_cloud_update):
+            return None
+        if self.cloud_transfer is None:
+            self.cloud_transfer = {'transfer': JSONTransfer(), 'revision': self.recordings_revision}
+        return (Op.CLOUD_STATE, None, self.cloud_transfer['transfer'].request() + self.cloud_transfer['revision'])
+
+    def accept_cloud(self, response):
+        transfer = self.cloud_transfer
+        if transfer is None:
+            return
+        try:
+            if response is None or response.result != Result.OK:
+                raise ValueError('Cloud state refresh unavailable')
+            value = transfer['transfer'].accept(response.data)
+            if value is None:
+                return
+            values = value.get('u')
+            if (transfer['revision'] != self.recordings_revision or not isinstance(values, list)
+                    or len(values) != len(self.recordings) or type(value.get('v')) is not int
+                    or any(type(number) is not int or not -1 <= number < len(CLOUD_PHASES) for number in values)):
+                raise ValueError('Invalid cloud states')
+            self.recordings_upload = {row[0]: {'state': CLOUD_PHASES[number], 'progress':100 if CLOUD_PHASES[number]=='uploaded' else 0}
+                                     for row, number in zip(self.recordings,values) if number >= 0}
+            self.upload_revision = value['v']
+            self.cloud_transfer = None
+        except (ValueError, zlib.error, KeyError, TypeError):
+            self.cloud_transfer = None
+            self.next_cloud_update = time.monotonic() + 10
 
     def refresh_topics(self):
         with self.lock:
@@ -396,6 +464,9 @@ class Remote:
                 self.data_transfer = None
         if restarted:
             self.segment_sample = None
+            self.cloud = None
+            self.cloud_transfer = None
+            self.upload_revision = None
         elif (previous is not None and previous.name and previous.state in (State.STARTING, State.RECORDING, State.STOPPING)
               and response.state == State.IDLE and response.flags & 16):
             self.completion_target = previous.name
@@ -404,6 +475,11 @@ class Remote:
             self.completed_at = None
         if response.op == Op.STATUS:
             telemetry = response.as_dict()
+            self.cloud = telemetry.get('cloud')
+            if self.cloud:
+                for row in self.recordings:
+                    if recording_token(row[0]).hex() == self.cloud.get('recording_token'):
+                        self.recordings_upload[row[0]] = {k: self.cloud[k] for k in ('state', 'progress')}
             self.segment_sample = (response.boot, response.recording, telemetry['segment_count'],
                                    telemetry['robot_link'], telemetry['robot_link_interrupted'])
         if self.latest is not None and self.latest.boot != response.boot and response.op != Op.SYNC:
@@ -465,7 +541,7 @@ class Remote:
                                                       "transfer": JSONTransfer(), "completion": True}
                                 continue
                             else:
-                                bandwidth_request = self.next_bandwidth_request()
+                                bandwidth_request = self.next_cloud_request() or self.next_bandwidth_request()
                                 if bandwidth_request is None:
                                     continue
                                 op, snapshot, data = bandwidth_request
@@ -507,13 +583,17 @@ class Remote:
                             self.data_transfer = None
                     elif op == Op.BANDWIDTH:
                         self.accept_bandwidth(response)
+                    elif op == Op.CLOUD_STATE:
+                        self.accept_cloud(response)
                     elif op not in (Op.STATUS, Op.SYNC):
                         result = response.result if response else Result.UNKNOWN
-                        action = "delete" if op == Op.DELETE else "start" if op in (Op.START, Op.START_SELECTED) else "stop"
-                        self.command = {"id": str(request.number), "action": action, "name": self.delete_target if op == Op.DELETE else None, "result": result.name.lower(),
+                        action = "cloud" if op == Op.UPLOAD_MODE else "upload" if op == Op.UPLOAD else "delete" if op == Op.DELETE else "start" if op in (Op.START, Op.START_SELECTED) else "stop"
+                        self.command = {"id": str(request.number), "action": action, "name": self.delete_target if op in (Op.DELETE, Op.UPLOAD) else None, "result": result.name.lower(),
                                         "message": RESULT_TEXT[result]}
                         self.pending = None
                         self.needs_refresh = response is None
+                        if op == Op.UPLOAD and result == Result.ACCEPTED:
+                            self.recordings_upload[self.delete_target] = {'state':'queued', 'progress':0}
                         if op == Op.DELETE and result == Result.ACCEPTED:
                             if self.completed_recording and self.completed_recording["name"] == self.delete_target:
                                 self.completed_recording = None
@@ -530,7 +610,7 @@ class Remote:
                 # Wait after each reply; commands take priority over the next status poll.
                 if op == Op.SYNC and response is None:
                     self.stopped.wait(1)
-                if op not in (Op.TOPICS, Op.RECORDINGS, Op.BAG_INFO, Op.BANDWIDTH):
+                if op not in (Op.TOPICS, Op.RECORDINGS, Op.BAG_INFO, Op.BANDWIDTH, Op.CLOUD_STATE):
                     next_poll = time.monotonic() + (0.5 if op != Op.STATUS else self.poll_seconds)
                 elif self.stopped.wait(0.3):
                     break
@@ -590,7 +670,7 @@ def make_handler(remote, port):
             if (not self.valid_host() or self.headers.get("X-LoRa-Control") != token
                     or (origin is not None and origin != "http://" + self.headers.get("Host", ""))):
                 return self.reply(403, {"error": "Open the local control page before sending commands"})
-            if self.path not in ("/api/start", "/api/stop", "/api/topics", "/api/recordings", "/api/recording-info", "/api/delete", "/api/bandwidth"):
+            if self.path not in ("/api/start", "/api/stop", "/api/topics", "/api/recordings", "/api/recording-info", "/api/delete", "/api/bandwidth", "/api/upload", "/api/cloud"):
                 return self.reply(404, {"error": "Unknown endpoint"})
             try:
                 length = int(self.headers.get("Content-Length", "0"))
@@ -601,6 +681,10 @@ def make_handler(remote, port):
                     raise ValueError("Expected an object")
                 if self.path == '/api/bandwidth':
                     pass  # Legacy clients may read status but cannot enable auto sampling.
+                elif self.path == "/api/cloud":
+                    remote.set_upload_mode(body.get("mode"))
+                elif self.path == "/api/upload":
+                    remote.upload_recording(body.get("name"), body.get("revision"))
                 elif self.path == "/api/topics":
                     remote.refresh_topics()
                 elif self.path == "/api/recordings":

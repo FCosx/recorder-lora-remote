@@ -16,7 +16,7 @@ from urllib.request import ProxyHandler, Request as HTTPRequest, build_opener
 
 from .common import SerialLink
 from .protocol import (
-    CATALOG_REQUEST, CATALOG_RESPONSE, COMMAND_LIFETIME, MAX_PAYLOAD, RESPONSE,
+    CLOUD_TELEMETRY, CLOUD_PHASES, CLOUD_REACH, CATALOG_REQUEST, CATALOG_RESPONSE, COMMAND_LIFETIME, MAX_PAYLOAD, RESPONSE,
     RECORDING_NAME, SPLIT_LIMITS, STATUS_TELEMETRY, SYNC_RESPONSE, UNKNOWN32, UNKNOWN64, ZERO, Op, Request, Response, Result, State, recording_token, split_limits,
 )
 
@@ -84,6 +84,17 @@ class RecorderAPI:
         if not RECORDING_NAME.fullmatch(name):
             raise ValueError("Invalid recording name")
         return self.request(f"/api/recordings/{name}/delete", {"name": name}, timeout=5)
+
+    def cloud(self):
+        return self.request('/api/cloud', timeout=3)
+
+    def upload(self, name):
+        if not RECORDING_NAME.fullmatch(name):
+            raise ValueError('Invalid recording name')
+        return self.request(f'/api/recordings/{name}/upload', {'name': name}, timeout=5)
+
+    def upload_mode(self, mode):
+        return self.request('/api/cloud', {'mode': mode}, timeout=3)
 
     def bandwidth(self, action):
         value = self.request('/api/bandwidth', {'action': action}, timeout=3)
@@ -176,6 +187,14 @@ class Agent:
                              't': sample.get('measured_at'),
                              'e': sample.get('state') == 'measuring' if enabled else False,
                              's': sample.get('state', 'idle'), 'x': sample.get('error')}
+                elif request.op == Op.CLOUD_STATE:
+                    listed = self.recording_transfers.get(Op.RECORDINGS)
+                    if listed is None or selector != listed['revision']:
+                        return self.snapshot(request, Result.INVALID_RECORDING)
+                    cloud = self.api.cloud()
+                    uploads = cloud.get('uploads', {})
+                    value = {'u': [CLOUD_PHASES.index(uploads[row[0]]['state']) if row[0] in uploads else -1
+                                   for row in listed['value']['r']], 'v': cloud.get('revision', 0)}
                 elif request.op == Op.RECORDINGS:
                     if len(selector) != 2:
                         return self.snapshot(request, Result.INVALID_RECORDING)
@@ -184,6 +203,7 @@ class Agent:
                     value = {"r": [[row["name"], row["bytes"], row["started_at"], row["duration_seconds"],
                                      row["total_messages"]] for row in rows],
                              "h": {row["name"]: row["health"] for row in rows if row.get("health")},
+                             "u": [(row.get("upload") or {}).get("state") for row in rows],
                              "t": page["total"], "n": page["next_offset"]}
                 else:
                     name = selector.decode("ascii")
@@ -191,7 +211,7 @@ class Agent:
                         return self.snapshot(request, Result.INVALID_RECORDING)
                     info = self.api.recording_info(name)
                     value = {"s": info["bag_size_bytes"], "d": info["duration_seconds"], "m": info["total_messages"],
-                             "h": info.get("health"),
+                             "h": info.get("health"), "u": info.get("upload"),
                              "topics": [[topic["name"], topic["messages"], topic["type"]] for topic in info["topics"]]}
                 raw = json.dumps(value, separators=(",", ":")).encode()
                 packed = zlib.compress(raw)
@@ -295,8 +315,12 @@ class Agent:
             if not self.fresh(request):
                 return Result.EXPIRED
             self.api.stop(status["name"])
-        elif request.op == Op.DELETE:
-            if status["state"] != "idle":
+        elif request.op == Op.UPLOAD_MODE:
+            if request.data not in (b'\x00', b'\x01'):
+                return Result.INVALID_RECORDING
+            self.api.upload_mode('automatic' if request.data == b'\x01' else 'manual')
+        elif request.op in (Op.DELETE, Op.UPLOAD):
+            if request.op == Op.DELETE and status["state"] != "idle":
                 return Result.BUSY
             cached = self.recording_transfers.get(Op.RECORDINGS)
             if (len(request.data) != 16 or cached is None or request.data[:8] != cached["revision"]
@@ -305,7 +329,10 @@ class Agent:
             name = next((row[0] for row in cached["value"]["r"] if recording_token(row[0]) == request.data[8:]), None)
             if name is None or not self.fresh(request):
                 return Result.INVALID_RECORDING
-            self.api.delete(name)
+            if request.op == Op.UPLOAD:
+                self.api.upload(name)
+            else:
+                self.api.delete(name)
         return Result.ACCEPTED
 
     def snapshot(self, request, result):
@@ -335,6 +362,12 @@ class Agent:
         if type(interruptions) is int and interruptions > 0:
             link |= 4
         segment_data = STATUS_TELEMETRY.pack(segments if type(segments) is int and 0 <= segments < 65535 else 65535, link) if request.op == Op.STATUS else b""
+        cloud = status.get('cloud')
+        if request.op == Op.STATUS and isinstance(cloud, dict):
+            segment_data += CLOUD_TELEMETRY.pack(int(bool(cloud.get('configured'))) | (int(cloud.get('mode') == 'automatic') << 1),
+                            CLOUD_REACH.index(cloud.get('reachable', 'unknown')),
+                            CLOUD_PHASES.index(cloud.get('state', 'idle')),
+                            min(100, max(0, int(cloud.get('progress', 0)))), recording_token(cloud.get('name')), cloud.get('revision', 0))
         return Response(
             request.op, request.number, result, state, flags,
             unsigned(None if elapsed is None else elapsed * 1000, UNKNOWN32),
@@ -359,7 +392,7 @@ class Agent:
             except Exception:
                 LOG.exception("Topic discovery failed")
                 return self.snapshot(request, Result.API_ERROR)
-        if request.op in (Op.RECORDINGS, Op.BAG_INFO, Op.BANDWIDTH):
+        if request.op in (Op.RECORDINGS, Op.BAG_INFO, Op.BANDWIDTH, Op.CLOUD_STATE):
             try:
                 return self.recording_response(request)
             except APIRejected:

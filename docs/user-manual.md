@@ -226,3 +226,16 @@ timeout 10 env -u ROS_LOCALHOST_ONLY \
 This prints one message and exits, omitting array contents. If nothing arrives within ten seconds, check that the topic is currently publishing. Slow or event-driven topics may require more time or a trigger. If a continuously published topic is still silent, fix the bridge connection before recording again.
 
 The web page currently has no login; use it on a trusted local network. The prepared Pi supplies the bridge installer and corrected bridge resources. You do not need to clone this GitHub repository first.
+
+
+## Optional cloud upload
+
+Once the maintainer configures MinIO on the Pi, both control pages provide **Cloud upload**:
+
+- **Manual** is the initial mode. Press **Upload to cloud** beside a completed recording to queue it.
+- Select **Automatic when idle**, then **Apply**, to upload completed bags while idle, including older recordings. Switching back to Manual suspends automatically selected jobs; manually selected jobs can still run while idle.
+- Every MCAP segment is losslessly compressed with indexed Zstandard chunks before upload, together with matching bag metadata. Starting a recording stops compression/upload work first; it resumes afterward. An upload selected during capture only queues the job.
+- **Cloud connected / Cloud unavailable** describes the Pi-to-cloud connection. A working LoRa link does not establish cloud access. **Uploaded to cloud** appears after every file passes full read-back verification, which also takes time.
+- Originals remain on the Pi until you delete them. Compression needs temporary free space. Finish an incomplete multipart upload before deleting its local bag.
+
+LoRa carries control/status only; the Pi uploads through its own network connection. For cloud downloads, save `metadata.yaml` and every referenced `.mcap` file together for normal ROS bag playback. The maintainer provides cloud accounts and download access. An uploaded badge does not guarantee permanent retention or backup.

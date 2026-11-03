@@ -75,3 +75,16 @@ python3 -B ~/robot-recorder/tools/lora_recorder.py remote
 ```
 
 此设置只影响 LoRa 状态轮询，不改变以太网/Zenoh 数据通道或录制参数。两秒版本 v0.4.0 仍保留供完整回退；远距离性能需在实际位置验证。
+
+
+## 云端上传（可选）
+
+维护者配置好树莓派的 MinIO 连接后，两种控制页面均可使用 **Cloud upload**：
+
+- 默认 **Manual**：点击录制条目旁的 **Upload to cloud**，将该 bag 加入上传队列。
+- **Automatic when idle**：选择后点 **Apply**，空闲时自动上传已完成的 bag，包括以前的录制。切回 Manual 会暂停自动选择的任务；手动选择的任务仍可在空闲时执行。
+- 所有 MCAP 分段先在 Pi 空闲时无损压缩为带索引的 Zstandard MCAP，再连同元数据上传；开始录制会先停止压缩和上传工作，结束后恢复。正在录制时点击上传只会排队。
+- **Cloud connected / Cloud unavailable** 表示树莓派到云端的连接情况；LoRa 无线连接正常不代表云端可达。显示 **Uploaded to cloud** 后，表示所有文件已完成读回校验。校验也需要等待。
+- 上传后保留 Pi 上的原 bag；用户自行决定是否删除。临时空间不足时不会开始压缩。尚未完成的分片上传需完成后再删除本地 bag。
+
+LoRa 只传控制和状态，bag 由树莓派联网上传。下载云端录制时，把 `metadata.yaml` 及其引用的全部 `.mcap` 文件保存在同一目录，即可按普通 ROS bag 使用。云端账号和下载入口由维护者提供；上传完成标记不代表云端文件会永久保留或已有备份。

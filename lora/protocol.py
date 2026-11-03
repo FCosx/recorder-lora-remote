@@ -32,6 +32,9 @@ SYNC_RESPONSE = struct.Struct("!16sQ")
 SPLIT_LIMITS = struct.Struct("!II")
 STATUS_SEGMENTS = struct.Struct("!H")
 STATUS_TELEMETRY = struct.Struct("!HB")  # Existing count plus one link-warning byte.
+CLOUD_TELEMETRY = struct.Struct('!BBBB8sH')
+CLOUD_PHASES = ('idle', 'queued', 'compressing', 'uploading', 'verifying', 'paused', 'uploaded', 'error')
+CLOUD_REACH = ('unknown', 'reachable', 'unreachable', 'not_configured')
 MAX_SPLIT_SIZE_MIB = 1024 * 1024
 MAX_SPLIT_DURATION_SECONDS = 7 * 24 * 60 * 60
 RECORDING_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}\Z")
@@ -48,6 +51,9 @@ class Op(IntEnum):
     BAG_INFO = 7
     DELETE = 8
     BANDWIDTH = 9
+    UPLOAD = 10
+    UPLOAD_MODE = 11
+    CLOUD_STATE = 12
 
 
 class State(IntEnum):
@@ -246,9 +252,16 @@ class Response:
 
     def as_dict(self):
         segments, link = 65535, 0
+        cloud = None
         if self.op == Op.STATUS:
-            if len(self.data) == STATUS_TELEMETRY.size:
-                segments, link = STATUS_TELEMETRY.unpack(self.data)
+            if len(self.data) in (STATUS_TELEMETRY.size, STATUS_TELEMETRY.size + CLOUD_TELEMETRY.size):
+                segments, link = STATUS_TELEMETRY.unpack(self.data[:STATUS_TELEMETRY.size])
+                if len(self.data) > STATUS_TELEMETRY.size:
+                    flags, reach, phase, percent, name, revision = CLOUD_TELEMETRY.unpack(self.data[STATUS_TELEMETRY.size:])
+                    if flags <= 3 and reach < len(CLOUD_REACH) and phase < len(CLOUD_PHASES) and percent <= 100:
+                        cloud = {'configured': bool(flags & 1), 'mode': 'automatic' if flags & 2 else 'manual',
+                                 'reachable': CLOUD_REACH[reach], 'state': CLOUD_PHASES[phase],
+                                 'progress': percent, 'recording_token': name.hex(), 'revision': revision}
                 if link & ~7 or link & 3 == 3:
                     link = 0
             elif len(self.data) == STATUS_SEGMENTS.size:
@@ -261,6 +274,7 @@ class Response:
             "total_bytes": None if self.total_bytes == UNKNOWN64 else self.total_bytes,
             "temperature_c": None if self.temperature_tenths == 32767 else self.temperature_tenths / 10,
             "topic_count": self.topic_count, "storage_warning": bool(self.flags & 1),
+            "cloud": cloud,
             "segment_count": None if segments == 65535 else segments,
             "robot_link": {0: 'unknown', 1: 'connected', 2: 'lost'}.get(link & 3, 'unknown'),
             "robot_link_interrupted": bool(link & 4),

@@ -79,3 +79,16 @@ python3 -B ~/robot-recorder/tools/lora_recorder.py remote
 ```
 
 Run only one client at a time. No re-pairing or Pi restart is needed. This option changes LoRa status polling only; Ethernet/Zenoh transport and recording settings stay the same. Release v0.4.0 remains available for a full rollback to the earlier two-second version. Check long-distance behavior in the intended environment.
+
+
+## Optional cloud upload
+
+Once the maintainer configures MinIO on the Pi, both control pages provide **Cloud upload**:
+
+- **Manual** is the initial mode. Press **Upload to cloud** beside a completed recording to queue it.
+- Select **Automatic when idle**, then **Apply**, to upload completed bags while idle, including older recordings. Switching back to Manual suspends automatically selected jobs; manually selected jobs can still run while idle.
+- Every MCAP segment is losslessly compressed with indexed Zstandard chunks before upload, together with matching bag metadata. Starting a recording stops compression/upload work first; it resumes afterward. An upload selected during capture only queues the job.
+- **Cloud connected / Cloud unavailable** describes the Pi-to-cloud connection. A working LoRa link does not establish cloud access. **Uploaded to cloud** appears after every file passes full read-back verification, which also takes time.
+- Originals remain on the Pi until you delete them. Compression needs temporary free space. Finish an incomplete multipart upload before deleting its local bag.
+
+LoRa carries control/status only; the Pi uploads through its own network connection. For cloud downloads, save `metadata.yaml` and every referenced `.mcap` file together for normal ROS bag playback. The maintainer provides cloud accounts and download access. An uploaded badge does not guarantee permanent retention or backup.
