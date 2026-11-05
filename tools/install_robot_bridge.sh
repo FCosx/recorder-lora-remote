@@ -20,7 +20,7 @@ while (( $# )); do
 done
 trap 'echo "Setup stopped at line $LINENO. Fix the reported error, then run the same setup command again." >&2' ERR
 [[ -n "$pi_url" ]] || { echo 'Required: --pi-url http://PI_IP:8080' >&2; exit 1; }
-[[ $EUID -ne 0 ]] || { echo 'Run as your normal ROS user; sudo is requested only for packages.' >&2; exit 1; }
+[[ $EUID -ne 0 ]] || { echo 'Run as your normal ROS user; setup requests sudo if needed.' >&2; exit 1; }
 [[ "$domain" =~ ^[0-9]{1,3}$ ]] || { echo 'ROS domain must be 0–232.' >&2; exit 1; }
 domain=$((10#$domain))
 (( domain <= 232 )) || { echo 'ROS domain must be 0–232.' >&2; exit 1; }
@@ -48,24 +48,33 @@ ipaddress.IPv4Address(u.hostname)
 print(u.hostname)
 PY
 )
+python3 - "$pi_url" <<'PIGUARD'
+import json,sys
+from urllib.request import ProxyHandler,build_opener
+with build_opener(ProxyHandler({})).open(sys.argv[1]+'/api/status',timeout=6) as response:
+    state=json.load(response)
+if state.get('state') != 'idle':
+    raise SystemExit('Stop recording before installing or changing the robot bridge.')
+PIGUARD
 mkdir -p "$install_dir/tools" "$install_dir/zenoh/patches"
+download() {
+  local temporary
+  temporary=$(mktemp)
+  if ! curl -q --noproxy '*' -fL --retry 2 --connect-timeout 10 --max-time 60 \
+    "$pi_url/setup/$1" -o "$temporary"; then rm -f "$temporary"; return 1; fi
+  install -m 644 "$temporary" "$install_dir/$2"
+  rm -f "$temporary"
+}
 if ! $configure_only; then
   if ! $skip_dependencies; then
     sudo apt-get update
     sudo apt-get install -y build-essential cmake libclang-dev pkg-config curl \
       ca-certificates patch git util-linux "ros-${ros_distro}-rmw-cyclonedds-cpp"
   fi
-  download() {
-    local temporary
-    temporary=$(mktemp)
-    if ! curl -q --noproxy '*' -fL --retry 2 --connect-timeout 10 --max-time 60 \
-      "$pi_url/setup/$1" -o "$temporary"; then rm -f "$temporary"; return 1; fi
-    install -m 644 "$temporary" "$install_dir/$2"
-    rm -f "$temporary"
-  }
   download build_zenoh_bridge.sh tools/build_zenoh_bridge.sh
   download start_zenoh_bridge.sh tools/start_zenoh_bridge.sh
   download robot_bandwidth.py tools/robot_bandwidth.py
+    download robot_bridge_service.py tools/robot_bridge_service.py
   download route-listener-lifetime.patch zenoh/patches/1.10.1-route-listener-lifetime.patch
   export PATH="$HOME/.cargo/bin:$PATH"
   if [[ -f "$install_dir/.bridge-build.sha256" ]] &&
@@ -107,5 +116,9 @@ start+=f'exec bash {shlex.quote(str(root/"tools/start_zenoh_bridge.sh"))} {shlex
 probe=environment+'exec ros2 topic pub -r 2 /zenoh_test std_msgs/msg/String "{data: \'hello over Zenoh\'}"\n'
 (root/'tools/publish_bridge_test.sh').write_text(probe)
 PY
-echo 'Setup complete. Start the robot bridge with:'
-printf 'bash %q\n' "$install_dir/tools/start_robot_bridge.sh"
+if [[ ! -f "$install_dir/tools/robot_bridge_service.py" ]]; then
+  download robot_bridge_service.py tools/robot_bridge_service.py
+fi
+python3 -B "$install_dir/tools/robot_bridge_service.py" install --root "$install_dir" \
+  --config "$install_dir/zenoh/robot.json5" --ros-distro "$ros_distro" --pi-url "$pi_url"
+echo 'Setup complete. The bridge starts automatically; no open terminal is required.'

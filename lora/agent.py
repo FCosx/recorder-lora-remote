@@ -96,6 +96,9 @@ class RecorderAPI:
     def upload_mode(self, mode):
         return self.request('/api/cloud', {'mode': mode}, timeout=3)
 
+    def stop_uploads(self):
+        return self.request('/api/cloud/stop', {}, timeout=5)
+
     def bandwidth(self, action):
         value = self.request('/api/bandwidth', {'action': action}, timeout=3)
         if action == 'sample':
@@ -319,6 +322,10 @@ class Agent:
             if request.data not in (b'\x00', b'\x01'):
                 return Result.INVALID_RECORDING
             self.api.upload_mode('automatic' if request.data == b'\x01' else 'manual')
+        elif request.op == Op.UPLOAD_STOP:
+            if request.data:
+                return Result.INVALID_RECORDING
+            self.api.stop_uploads()
         elif request.op in (Op.DELETE, Op.UPLOAD):
             if request.op == Op.DELETE and status["state"] != "idle":
                 return Result.BUSY
@@ -364,7 +371,8 @@ class Agent:
         segment_data = STATUS_TELEMETRY.pack(segments if type(segments) is int and 0 <= segments < 65535 else 65535, link) if request.op == Op.STATUS else b""
         cloud = status.get('cloud')
         if request.op == Op.STATUS and isinstance(cloud, dict):
-            segment_data += CLOUD_TELEMETRY.pack(int(bool(cloud.get('configured'))) | (int(cloud.get('mode') == 'automatic') << 1),
+            segment_data += CLOUD_TELEMETRY.pack(int(bool(cloud.get('configured'))) | (int(cloud.get('mode') == 'automatic') << 1)
+                            | (int(bool(cloud.get('queued'))) << 2),
                             CLOUD_REACH.index(cloud.get('reachable', 'unknown')),
                             CLOUD_PHASES.index(cloud.get('state', 'idle')),
                             min(100, max(0, int(cloud.get('progress', 0)))), recording_token(cloud.get('name')), cloud.get('revision', 0))

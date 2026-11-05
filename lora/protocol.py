@@ -33,7 +33,7 @@ SPLIT_LIMITS = struct.Struct("!II")
 STATUS_SEGMENTS = struct.Struct("!H")
 STATUS_TELEMETRY = struct.Struct("!HB")  # Existing count plus one link-warning byte.
 CLOUD_TELEMETRY = struct.Struct('!BBBB8sH')
-CLOUD_PHASES = ('idle', 'queued', 'compressing', 'uploading', 'verifying', 'paused', 'uploaded', 'error')
+CLOUD_PHASES = ('idle', 'queued', 'compressing', 'uploading', 'verifying', 'paused', 'uploaded', 'error', 'stopped')
 CLOUD_REACH = ('unknown', 'reachable', 'unreachable', 'not_configured')
 MAX_SPLIT_SIZE_MIB = 1024 * 1024
 MAX_SPLIT_DURATION_SECONDS = 7 * 24 * 60 * 60
@@ -54,6 +54,7 @@ class Op(IntEnum):
     UPLOAD = 10
     UPLOAD_MODE = 11
     CLOUD_STATE = 12
+    UPLOAD_STOP = 13
 
 
 class State(IntEnum):
@@ -258,10 +259,11 @@ class Response:
                 segments, link = STATUS_TELEMETRY.unpack(self.data[:STATUS_TELEMETRY.size])
                 if len(self.data) > STATUS_TELEMETRY.size:
                     flags, reach, phase, percent, name, revision = CLOUD_TELEMETRY.unpack(self.data[STATUS_TELEMETRY.size:])
-                    if flags <= 3 and reach < len(CLOUD_REACH) and phase < len(CLOUD_PHASES) and percent <= 100:
+                    if flags <= 7 and reach < len(CLOUD_REACH) and phase < len(CLOUD_PHASES) and percent <= 100:
                         cloud = {'configured': bool(flags & 1), 'mode': 'automatic' if flags & 2 else 'manual',
                                  'reachable': CLOUD_REACH[reach], 'state': CLOUD_PHASES[phase],
-                                 'progress': percent, 'recording_token': name.hex(), 'revision': revision}
+                                 'progress': percent, 'recording_token': name.hex(), 'revision': revision,
+                                 'queued': int(bool(flags & 4))}
                 if link & ~7 or link & 3 == 3:
                     link = 0
             elif len(self.data) == STATUS_SEGMENTS.size:

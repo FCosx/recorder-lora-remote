@@ -42,6 +42,7 @@ Before starting, optionally set MiB and/or seconds under `Split MCAP files`. Lea
 Opening the page or clicking **Refresh topics** requests one quick robot-side bandwidth snapshot. Topics are sampled together for about one second, targeting a result within about 1–2 seconds on a healthy link. **—** means insufficient samples or a timeout, not zero. Per-topic rates and the selected total stay visible until the next refresh. LoRa delivery takes additional time. Temporary subscribers count bytes in robot RAM only, save no messages and send only metadata/results to the Pi. Starting recording from either UI waits for the robot to confirm that its temporary subscribers have closed; missing confirmation prevents recording from starting. These short receive-rate estimates do not guarantee complete delivery or sustainable storage throughput.
 
 A known robot link that stops responding shows **Robot connection unavailable** after about 4–5 seconds, plus LoRa delivery time. Recording continues. A recovered interruption remains noted on that recording; `View topics` shows the interruption count. This reuses the existing helper heartbeat, adds no sensor subscriptions, and does not measure message loss. No warning is shown until a robot helper has been seen in the current domain; shorter interruptions may not be detected.
+
 ## View recordings
 
 `Refresh recordings` loads all completed recordings in one list, showing their names, start times, sizes, durations and message counts. No page changes are needed. `View topics` loads topic names, message counts, average Hz and types. `Delete` requires confirmation and permanently removes the recording and all its files; it is available only while the recorder is idle. Warning/Error badges include brief reasons, with more detail under `View topics`.
@@ -80,15 +81,15 @@ python3 -B ~/robot-recorder/tools/lora_recorder.py remote
 
 Run only one client at a time. No re-pairing or Pi restart is needed. This option changes LoRa status polling only; Ethernet/Zenoh transport and recording settings stay the same. Release v0.4.0 remains available for a full rollback to the earlier two-second version. Check long-distance behavior in the intended environment.
 
-
 ## Optional cloud upload
 
-Once the maintainer configures MinIO on the Pi, both control pages provide **Cloud upload**:
+After the maintainer configures cloud access, use the controls beside **Refresh recordings** in **Recordings on the Pi**:
 
-- **Manual** is the initial mode. Press **Upload to cloud** beside a completed recording to queue it.
-- Select **Automatic when idle**, then **Apply**, to upload completed bags while idle, including older recordings. Switching back to Manual suspends automatically selected jobs; manually selected jobs can still run while idle.
-- Every MCAP segment is losslessly compressed with indexed Zstandard chunks before upload, together with matching bag metadata. Starting a recording stops compression/upload work first; it resumes afterward. An upload selected during capture only queues the job.
-- **Cloud connected / Cloud unavailable** describes the Pi-to-cloud connection. A working LoRa link does not establish cloud access. **Uploaded to cloud** appears after every file passes full read-back verification, which also takes time.
-- Originals remain on the Pi until you delete them. Compression needs temporary free space. Finish an incomplete multipart upload before deleting its local bag.
+- **Manual upload** is the initial mode. Choose **Upload to cloud** on each completed recording you want to upload.
+- Switch to **Automatic upload** and confirm to upload completed recordings when the Pi is idle, including older local recordings.
+- **Stop uploads** stops compression, transfer and queued work, and returns the mode to Manual. Choose **Resume upload** on a recording to continue it; preparation or verification may repeat.
+- **Cloud connected** describes the Pi's cloud connection. New uploads and mode changes are unavailable while the cloud is unreachable. Radio connectivity alone does not establish cloud access.
+- MCAP files are losslessly compressed using indexed Zstandard chunks before upload. Recording takes priority: compression and transfer pause before capture starts and can resume afterward.
+- **Uploaded to cloud** appears after all files pass read-back verification. Originals stay on the Pi until you choose **Delete**. Compression needs temporary free space.
 
-LoRa carries control/status only; the Pi uploads through its own network connection. For cloud downloads, save `metadata.yaml` and every referenced `.mcap` file together for normal ROS bag playback. The maintainer provides cloud accounts and download access. An uploaded badge does not guarantee permanent retention or backup.
+The Pi uploads through its own internet connection; LoRa carries only commands and status. The maintainer supplies cloud accounts and the download address. For ROS playback, download `metadata.yaml` and every referenced `.mcap` file into the same folder.

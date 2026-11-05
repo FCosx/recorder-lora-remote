@@ -99,6 +99,15 @@
 .status-updates{display:flex;flex-direction:column;align-items:flex-end;gap:3px;text-align:right}.status-updates #cpu-temp{font-weight:650;color:#435364}
 select{font:inherit;padding:8px 10px;border:1px solid #b9cbd9;border-radius:6px;background:#fff}
 .upload-badge{background:#e7f5ed!important;color:#12603c!important}.upload-badge[hidden]{display:none!important}
+
+    .recordings-tools { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    .cloud-switch { display:inline-flex; gap:8px; align-items:center; background:#e9f1f8; color:#174d80; }
+    .switch-track { width:30px; height:18px; border-radius:10px; background:#7a8794; padding:2px; box-sizing:border-box; }
+    .switch-track::after { content:''; display:block; width:14px; height:14px; border-radius:50%; background:white; transition:transform .15s; }
+    .cloud-switch[aria-checked="true"] .switch-track { background:#18734a; }
+    .cloud-switch[aria-checked="true"] .switch-track::after { transform:translateX(12px); }
+    .cloud-summary { display:flex; gap:4px 14px; align-items:center; flex-wrap:wrap; margin:10px 0; font-size:.85rem; }
+    #cloud-error { font-size:.85rem; color:#a01818; margin:6px 0; }
 </style></head><body>
 <h1>Robot Recorder <span class="badge">LoRa remote</span></h1>
 <p class="muted">Choose ROS 2 topics and save recordings on the Raspberry Pi.</p>
@@ -128,13 +137,17 @@ select{font:inherit;padding:8px 10px;border:1px solid #b9cbd9;border-radius:6px;
  <p id="topic-progress" class="muted" role="status">Refresh to get the topic list over LoRa.</p><div id="topic-list" class="topic-list"></div><p id="selection-count" class="muted" hidden></p><p id="bandwidth-note" class="muted" role="status" hidden></p>
 </section>
 <section class="card">
- <div class="row" style="justify-content:space-between"><h2>Cloud upload</h2><strong id="cloud-status" role="status">Waiting for Pi status</strong></div>
- <div class="row"><label for="cloud-mode">Upload mode</label><select id="cloud-mode"><option value="manual">Manual</option><option value="automatic">Automatic when idle</option></select><button id="apply-cloud" class="secondary" disabled>Apply</button></div>
- <p class="muted">MCAP files are compressed before upload. Recording takes priority.</p>
-</section>
-<section class="card">
- <div class="row" style="justify-content:space-between"><h2>Recordings on the Pi</h2><button id="refresh-recordings" class="secondary" disabled>Refresh recordings</button></div>
- <p id="recordings-progress" class="muted" role="status">Refresh to load recordings over LoRa.</p><div id="recordings"></div>
+    <div class="row" style="justify-content:space-between">
+      <h2>Recordings on the Pi</h2>
+      <div class="recordings-tools">
+        <button id="cloud-mode" class="cloud-switch" role="switch" aria-label="Automatic cloud upload" aria-checked="false" aria-describedby="cloud-mode-help" disabled><span class="switch-track" aria-hidden="true"></span><span id="cloud-mode-label">Manual upload</span></button>
+        <button id="stop-cloud" class="stop" title="Stop compression and queued uploads; switch to Manual" disabled>Stop uploads</button>
+        <button id="refresh-recordings" class="secondary">Refresh recordings</button>
+      </div>
+    </div>
+    <div class="cloud-summary"><span id="cloud-status" class="badge" role="status">Checking cloud…</span><span id="cloud-mode-help" class="muted">Manual · Choose recordings to upload.</span></div>
+    <p id="cloud-error" role="status" hidden></p>
+    <p id="recordings-progress" class="muted" role="status">Refresh to load recordings over LoRa.</p><div id="recordings"></div>
 </section>
 <p id="browser-error" class="error" role="alert"></p>
 <footer>Files remain on the Pi. Losing radio contact does not stop recording.
@@ -193,7 +206,7 @@ class CommandFeedback{
   if(this.local)return {...this.local,dismissible:this.local.kind==='error'};
   const command=d.last_command;
   const failed=command&&!['ok','accepted','already_idle'].includes(command.result);
-  if(command&&this.commandKey!==this.dismissed&&(failed||now-this.commandAt<6000))return {text:`${command.action==='start'?'Start':command.action==='stop'?'Stop':command.action==='upload'?'Upload':command.action==='cloud'?'Upload mode':'Delete'}: ${command.message}`,kind:failed?'error':'success',dismissible:Boolean(failed)};
+  if(command&&this.commandKey!==this.dismissed&&(failed||now-this.commandAt<6000))return {text:`${command.action==='start'?'Start':command.action==='stop'?'Stop':command.action==='upload'?'Upload':command.action==='cloud'?'Upload mode':command.action==='cloud-stop'?'Stop uploads':'Delete'}: ${command.message}`,kind:failed?'error':'success',dismissible:Boolean(failed)};
   if(d.status.state==='idle'&&d.completion_pending)return {text:'Recording finished · fetching final bag details…',kind:'info'};
   if(d.status.state==='idle'&&d.completed_recording)return {text:`${d.completed_recording.name} saved · ${count(d.completed_recording.messages)} messages`,kind:'success'};
   if(d.topics_loading||d.metadata_loading)return {text:'Loading over LoRa…',kind:'info'};
@@ -247,7 +260,7 @@ function updateControls(d){
  const ready=metadataReady(d)&&d.recording_management;
  $('refresh-recordings').disabled=!ready;
  renderCloud(d);
- document.querySelectorAll('[data-bag-action]').forEach(button=>{const cached=Boolean(d.recording_info?.[button.dataset.name]);button.disabled=button.dataset.bagAction==='upload'?(!ready||!d.cloud?.configured||Boolean(d.recordings_upload?.[button.dataset.name]&&!['error','paused'].includes(d.recordings_upload[button.dataset.name].state))):button.dataset.bagAction==='delete'?(!ready||d.status.state!=='idle'):(!cached&&!ready)});
+ document.querySelectorAll('[data-bag-action]').forEach(button=>{const cached=Boolean(d.recording_info?.[button.dataset.name]);button.disabled=button.dataset.bagAction==='upload'?(!ready||!d.cloud?.configured||d.cloud.reachable!=='reachable'||Boolean(d.recordings_upload?.[button.dataset.name]&&!['error','paused','stopped'].includes(d.recordings_upload[button.dataset.name].state))):button.dataset.bagAction==='delete'?(!ready||d.status.state!=='idle'):(!cached&&!ready)});
 }
 function renderTopics(d){
  if(topicRevision!==d.topics_revision){
@@ -295,16 +308,35 @@ function renderRecordings(d){
  $('recordings-progress').textContent=d.metadata_loading?`${d.metadata_name?'Loading topic details':'Loading recordings'} over LoRa · ${d.metadata_progress||0}%`:d.recordings_error||(!d.recording_management?'Recording management needs an updated Pi LoRa agent.':d.recordings_loaded?`${d.recordings_total} ${d.recordings_total===1?'recording':'recordings'} on the Pi · Refresh to update this list.`:'Refresh to load recordings over LoRa.');
  $('refresh-recordings').textContent=d.metadata_loading&&!d.metadata_name?'Refreshing…':feedback.recentJob('recordings')?'List updated ✓':'Refresh recordings';$('refresh-recordings').classList.toggle('is-success',!d.metadata_loading&&feedback.recentJob('recordings'));$('refresh-recordings').classList.toggle('is-busy',Boolean(d.metadata_loading&&!d.metadata_name));
 }
-function uploadLabel(upload){return ({queued:'Queued',compressing:'Compressing',uploading:'Uploading',verifying:'Verifying',paused:'Upload paused',uploaded:'Uploaded ✓',error:'Upload failed · retry'})[upload?.state]||'Upload to cloud'}
+function uploadLabel(upload){return ({queued:'Queued',compressing:'Compressing',uploading:'Uploading',verifying:'Verifying',paused:'Resume upload',stopped:'Resume upload',uploaded:'Uploaded ✓',error:'Upload failed · retry'})[upload?.state]||'Upload to cloud'}
 function renderCloud(d){
- const cloud=d.cloud,ready=metadataReady(d)&&cloud?.configured;
- $('apply-cloud').disabled=!ready;$('cloud-mode').disabled=!ready;
- $('apply-cloud').textContent=d.pending==='cloud'?'Applying…':'Apply';$('apply-cloud').classList.toggle('is-busy',d.pending==='cloud');
- if(!cloud){$('cloud-status').textContent=d.radio_connected?'Cloud status unavailable':'Cloud status outdated';return}
- if(document.activeElement!==$('cloud-mode'))$('cloud-mode').value=cloud.mode;
+ const cloud=d.cloud;
+ const ready=metadataReady(d)&&cloud?.configured&&cloud.reachable==='reachable';
+ const automatic=cloud?.mode==='automatic';
+ const pending=d.pending==='cloud'||localAction==='cloud';
+ const stopping=d.pending==='cloud-stop'||localAction==='cloud-stop';
+ const busy=['compressing','uploading','verifying'].includes(cloud?.state);
+ $('cloud-mode').disabled=!ready;
+ $('cloud-mode').setAttribute('aria-checked',String(automatic));
+ $('cloud-mode').classList.toggle('is-busy',pending);
+ $('cloud-mode-label').textContent=pending?'Applying…':automatic?'Automatic upload':'Manual upload';
+ $('cloud-mode-help').textContent=automatic?'Automatic · Finished recordings upload when Pi is idle.':'Manual · Choose recordings to upload.';
+ $('stop-cloud').disabled=sending||!d.radio_connected||d.synchronized===false||Boolean(d.pending)||!cloud?.configured||!(busy||cloud.queued>0);
+ $('stop-cloud').classList.toggle('is-busy',stopping);
+ $('stop-cloud').textContent=stopping?'Stopping…':'Stop uploads';
+ $('cloud-error').hidden=!cloud?.error;
+ $('cloud-error').textContent=cloud?.error||'';
+ const fresh=d.radio_connected&&d.synchronized!==false;
+ $('cloud-status').className='badge'+(fresh&&cloud?.configured&&cloud.reachable==='reachable'?' good':!fresh||!cloud||cloud.reachable==='unreachable'?' bad':'');
+ if(!cloud||!fresh){$('cloud-status').textContent=fresh?'Cloud status unavailable':'Cloud status outdated';return}
  const reach={reachable:'Cloud connected',unreachable:'Cloud unavailable',unknown:'Checking cloud…',not_configured:'Cloud not configured'};
- const busy=['compressing','uploading','verifying'].includes(cloud.state);
- $('cloud-status').textContent=(reach[cloud.reachable]||'Cloud status unknown')+(busy?` · ${uploadLabel(cloud)} ${cloud.progress||0}%`:cloud.state==='paused'?' · Uploads paused':'');
+ $('cloud-status').textContent=(reach[cloud.reachable]||'Cloud status unknown')+(busy?` · ${uploadLabel(cloud)} ${cloud.progress||0}%`:cloud.state==='stopped'?' · Uploads stopped':cloud.state==='paused'?' · Uploads paused':'');
+}
+function changeCloudMode(){
+ if($('cloud-mode').disabled)return;
+ const mode=lastStatus?.cloud?.mode==='automatic'?'manual':'automatic';
+ if(mode==='automatic'&&!confirm('Enable automatic uploads? All finished recordings, including existing ones, will be compressed and uploaded whenever the Pi is idle. Recording takes priority.'))return;
+ command('cloud',{mode});
 }
 function render(d){
  feedback.observe(d);recordingTimer.update(d);if(stopRequestActive)recordingTimer.pause();updateTimer();lastStatus=d;
@@ -327,14 +359,15 @@ function render(d){
  const warnings=[];if(s.storage_warning&&!available)warnings.push('Pi storage is low');if(s.last_recording_error)warnings.push('Previous recording reported an error; inspect it on the Pi');else if(s.last_recording_warning)warnings.push('Previous recording reported a warning; inspect it on the Pi');$('warning').hidden=!warnings.length;$('warning').textContent=warnings.join(' · ');
 }
 let initialTopicRefresh=false;
-async function refresh(){try{const r=await fetch('/api/status',{signal:AbortSignal.timeout(3000)});if(!r.ok)throw Error('Status unavailable');const d=await r.json();render(d);$('browser-error').textContent='';if(!initialTopicRefresh&&d.radio_connected&&d.synchronized&&!d.pending){initialTopicRefresh=true;if(d.can_start&&metadataReady(d))command('topics')}}catch(e){$('robot-link-warning').hidden=true;recordingTimer.pause();updateTimer();document.querySelectorAll('button').forEach(button=>button.disabled=true);$('link').textContent='Local controller unavailable';$('link').className='badge bad';$('state').textContent='Status outdated';$('browser-error').textContent='Cannot reach this laptop’s LoRa controller. Keep its terminal running.'}finally{setTimeout(refresh,1000)}}
+async function refresh(){try{const r=await fetch('/api/status',{signal:AbortSignal.timeout(3000)});if(!r.ok)throw Error('Status unavailable');const d=await r.json();render(d);$('browser-error').textContent='';if(!initialTopicRefresh&&d.radio_connected&&d.synchronized&&!d.pending){initialTopicRefresh=true;if(d.can_start&&metadataReady(d))command('topics')}}catch(e){$('robot-link-warning').hidden=true;recordingTimer.pause();updateTimer();document.querySelectorAll('button').forEach(button=>button.disabled=true);$('link').textContent='Local controller unavailable';$('link').className='badge bad';$('cloud-status').textContent='Cloud status unavailable';$('cloud-status').className='badge bad';$('state').textContent='Status outdated';$('browser-error').textContent='Cannot reach this laptop’s LoRa controller. Keep its terminal running.'}finally{setTimeout(refresh,1000)}}
 async function command(action,extra={}){
  if(action==='start'&&![$('split-size'),$('split-duration')].every(input=>input.reportValidity())){feedback.fail('Enter a whole positive MiB or seconds value, or leave the split limit blank.');render(lastStatus);return;}
  sending=true;localAction=action;feedback.begin(`Sending ${action}…`);if(action==='stop'){stopRequestActive=true;recordingTimer.pause();updateTimer()}if(lastStatus)updateControls(lastStatus);
  const body=action==='start'?{mode:'selected',indices:topicNames.map((name,index)=>chosen.has(name)?index:-1).filter(index=>index>=0),revision:topicRevision,max_bag_size_mib:$('split-size').value===''?null:$('split-size').valueAsNumber,max_bag_duration_seconds:$('split-duration').value===''?null:$('split-duration').valueAsNumber}:extra;
  $('notice').textContent=`Sending ${action}…`;
- try{const r=await fetch('/api/'+action,{method:'POST',headers:{'X-LoRa-Control':'__CONTROL_TOKEN__','Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(3000)});const d=await r.json();if(!r.ok)throw Error(d.error||'Request rejected');feedback.clear();const snapshot=await fetch('/api/status',{signal:AbortSignal.timeout(3000)});if(snapshot.ok){lastStatus=await snapshot.json();render(lastStatus)}$('notice').textContent=['start','stop','delete','upload','cloud'].includes(action)?`Sending ${action} · waiting for Pi acknowledgment…`:'Loading over LoRa…'}catch(e){feedback.fail(e.message+'; check updated status before retrying');$('notice').textContent=e.message;$('notice').className='error';$('dismiss-notice').hidden=false}finally{sending=false;localAction=null;if(action==='stop')stopRequestActive=false;if(lastStatus)updateControls(lastStatus)}
+ try{const r=await fetch('/api/'+action,{method:'POST',headers:{'X-LoRa-Control':'__CONTROL_TOKEN__','Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(3000)});const d=await r.json();if(!r.ok)throw Error(d.error||'Request rejected');feedback.clear();const snapshot=await fetch('/api/status',{signal:AbortSignal.timeout(3000)});if(snapshot.ok){lastStatus=await snapshot.json();render(lastStatus)}$('notice').textContent=['start','stop','delete','upload','cloud','cloud-stop'].includes(action)?`Sending ${action} · waiting for Pi acknowledgment…`:'Loading over LoRa…'}catch(e){feedback.fail(e.message+'; check updated status before retrying');$('notice').textContent=e.message;$('notice').className='error';$('dismiss-notice').hidden=false}finally{sending=false;localAction=null;if(action==='stop')stopRequestActive=false;if(lastStatus)updateControls(lastStatus)}
 }
-$('apply-cloud').onclick=()=>command('cloud',{mode:$('cloud-mode').value});
+$('cloud-mode').onclick=changeCloudMode;
+$('stop-cloud').onclick=()=>command('cloud-stop');
 $('start').onclick=()=>command('start');$('stop').onclick=()=>command('stop');$('refresh-topics').onclick=()=>command('topics');$('refresh-recordings').onclick=()=>command('recordings');setInterval(updateTimer,100);refresh();
 </script></body></html>

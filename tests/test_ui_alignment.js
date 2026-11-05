@@ -11,6 +11,8 @@ if(fs.existsSync(path.join(root,'index.html'))){
  const local={};vm.runInNewContext(lan.slice(lan.indexOf('function recordedRate'),lan.indexOf('function renderStorage'))+'\nglobalThis.rate=recordedRate;',local);lanRate=local.rate;
  const notices={};vm.runInNewContext(lan.slice(lan.indexOf('function recordingWarning'),lan.indexOf('async function refreshRecordings'))+'\nglobalThis.warning=recordingWarning;',notices);
  assert.equal(notices.warning({state:'warning',data_loss:{cache_dropped:17109},message:'Detailed per-topic diagnostics '.repeat(100)}),'Warning: Data loss detected');
+ assert.equal(notices.warning({state:'warning',throughput_warning:{interface:'eth0'}}),'Warning: Possible data loss: network near capacity');
+ assert.equal(notices.warning({state:'warning',throughput_warning:{},data_loss:{cache_dropped:7}}),'Warning: Data loss detected');
  assert.equal(notices.warning({state:'error',data_loss:{unflushed_messages:2},exit_code:1}),'Error: Data loss detected · Recorder exited with code 1');
 }
 for(const [messages,seconds] of [[1,25],[1,250],[1,2500],[1,2e7],[1000,20],[0,10],[1,0],[null,10]])assert.equal(ctx.rate(messages,seconds),lanRate(messages,seconds));

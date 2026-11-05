@@ -23,6 +23,7 @@ class API:
     def cloud(self):return self.value['cloud']
     def upload(self,name):self.calls.append(('upload',name))
     def upload_mode(self,mode):self.calls.append(('mode',mode))
+    def stop_uploads(self):self.calls.append(('stop_uploads',))
 
 class RadioCloudTests(unittest.TestCase):
     def setUp(self):
@@ -86,3 +87,44 @@ class RadioCloudTests(unittest.TestCase):
         self.remote.upload_recording('recording-test',b'list-rev'.hex())
         op,_,data=self.remote.queue.get_nowait();self.assertEqual(op,Op.UPLOAD)
         self.assertEqual(len(data),16)
+
+    def test_stop_upload_is_fresh_idempotent_and_available_while_cloud_is_offline(self):
+        self.api.value['cloud'].update(reachable='unreachable', state='compressing', queued=1)
+        request = Request(Op.UPLOAD_STOP, 20, tick=1000, boot=self.agent.boot)
+        self.assertEqual(self.agent.handle(request).result, Result.ACCEPTED)
+        self.assertEqual(self.agent.handle(request).result, Result.ACCEPTED)
+        self.assertEqual(self.api.calls, [('stop_uploads',)])
+        expired = Request(Op.UPLOAD_STOP, 21, tick=900, boot=self.agent.boot)
+        self.assertEqual(self.agent.handle(expired).result, Result.EXPIRED)
+        self.remote.accept_snapshot(self.agent.handle(Request(Op.STATUS, 22)))
+        self.remote.stop_uploads()
+        self.assertEqual(self.remote.queue.get_nowait()[0], Op.UPLOAD_STOP)
+        self.assertEqual(self.remote.pending, 'cloud-stop')
+
+    def test_offline_cloud_disables_upload_and_mode_but_telemetry_retains_stop_state(self):
+        self.api.value['cloud'].update(reachable='unreachable', state='stopped', queued=0)
+        response = self.agent.handle(Request(Op.STATUS, 20))
+        self.assertLessEqual(len(response.encode(KEY)), MAX_FRAME)
+        self.remote.accept_snapshot(response)
+        self.assertEqual(self.remote.status()['cloud']['state'], 'stopped')
+        self.assertEqual(self.remote.status()['cloud']['queued'], 0)
+        with self.assertRaises(ValueError):
+            self.remote.set_upload_mode('automatic')
+        with self.assertRaises(ValueError):
+            self.remote.upload_recording('recording-test', '0000000000000000')
+        self.api.value['cloud'].update(state='queued', queued=3)
+        self.assertEqual(self.agent.handle(Request(Op.STATUS, 21)).as_dict()['cloud']['queued'], 1)
+
+    def test_stopped_upload_recordings_list_can_still_be_opened(self):
+        self.api.rows[0]['upload'] = {'state':'stopped', 'progress':0}
+        self.remote.refresh_recordings(0)
+        for number in range(20, 100):
+            transfer = self.remote.data_transfer
+            response = self.agent.handle(Request(Op.RECORDINGS, number,
+                data=transfer['transfer'].request()+transfer['selector']))
+            self.remote.accept_metadata(response)
+            if self.remote.data_transfer is None:
+                break
+        self.assertIsNone(self.remote.recordings_error)
+        self.assertTrue(self.remote.recordings_loaded)
+        self.assertEqual(self.remote.recordings_upload['recording-test']['state'], 'stopped')

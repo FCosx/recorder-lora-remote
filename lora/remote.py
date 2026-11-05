@@ -272,7 +272,8 @@ class Remote:
     def upload_recording(self, name, revision):
         with self.lock:
             self.check_metadata_ready()
-            if (not self.cloud or not self.cloud.get('configured') or revision != self.recordings_revision.hex()
+            if (not self.cloud or not self.cloud.get('configured') or self.cloud.get('reachable') != 'reachable'
+                    or revision != self.recordings_revision.hex()
                     or not isinstance(name, str) or not any(row[0] == name for row in self.recordings)):
                 raise ValueError('Refresh recordings and select a bag to upload')
             self.pending, self.delete_target = 'upload', name
@@ -281,10 +282,20 @@ class Remote:
     def set_upload_mode(self, mode):
         with self.lock:
             self.check_metadata_ready()
-            if mode not in ('manual', 'automatic') or not self.cloud or not self.cloud.get('configured'):
-                raise ValueError('Cloud upload is not configured')
+            if (mode not in ('manual', 'automatic') or not self.cloud or not self.cloud.get('configured')
+                    or self.cloud.get('reachable') != 'reachable'):
+                raise ValueError('Cloud unavailable; check the connection and retry')
             self.pending = 'cloud'
             self.queue.put_nowait((Op.UPLOAD_MODE, self.latest, bytes([int(mode == 'automatic')])))
+
+    def stop_uploads(self):
+        with self.lock:
+            status = self.status()
+            if (not status['radio_connected'] or not self.synchronized or self.needs_refresh or self.pending
+                    or not self.cloud or not self.cloud.get('configured')):
+                raise ValueError('Wait for fresh radio status before stopping uploads')
+            self.pending = 'cloud-stop'
+            self.queue.put_nowait((Op.UPLOAD_STOP, self.latest, b''))
 
     def accept_metadata(self, response):
         transfer = self.data_transfer
@@ -326,7 +337,7 @@ class Remote:
                 if not isinstance(uploads, dict) or not set(uploads).issubset({row[0] for row in rows}):
                     raise ValueError('Invalid upload states')
                 for upload in uploads.values():
-                    if not isinstance(upload, dict) or upload.get('state') not in ('queued','compressing','uploading','verifying','paused','uploaded','error'):
+                    if not isinstance(upload, dict) or upload.get('state') not in ('queued','compressing','uploading','verifying','paused','uploaded','error','stopped'):
                         raise ValueError('Invalid upload state')
                 self.upload_revision = None
                 self.cloud_transfer = None
@@ -587,7 +598,7 @@ class Remote:
                         self.accept_cloud(response)
                     elif op not in (Op.STATUS, Op.SYNC):
                         result = response.result if response else Result.UNKNOWN
-                        action = "cloud" if op == Op.UPLOAD_MODE else "upload" if op == Op.UPLOAD else "delete" if op == Op.DELETE else "start" if op in (Op.START, Op.START_SELECTED) else "stop"
+                        action = "cloud-stop" if op == Op.UPLOAD_STOP else "cloud" if op == Op.UPLOAD_MODE else "upload" if op == Op.UPLOAD else "delete" if op == Op.DELETE else "start" if op in (Op.START, Op.START_SELECTED) else "stop"
                         self.command = {"id": str(request.number), "action": action, "name": self.delete_target if op in (Op.DELETE, Op.UPLOAD) else None, "result": result.name.lower(),
                                         "message": RESULT_TEXT[result]}
                         self.pending = None
@@ -670,7 +681,7 @@ def make_handler(remote, port):
             if (not self.valid_host() or self.headers.get("X-LoRa-Control") != token
                     or (origin is not None and origin != "http://" + self.headers.get("Host", ""))):
                 return self.reply(403, {"error": "Open the local control page before sending commands"})
-            if self.path not in ("/api/start", "/api/stop", "/api/topics", "/api/recordings", "/api/recording-info", "/api/delete", "/api/bandwidth", "/api/upload", "/api/cloud"):
+            if self.path not in ("/api/start", "/api/stop", "/api/topics", "/api/recordings", "/api/recording-info", "/api/delete", "/api/bandwidth", "/api/upload", "/api/cloud", "/api/cloud-stop"):
                 return self.reply(404, {"error": "Unknown endpoint"})
             try:
                 length = int(self.headers.get("Content-Length", "0"))
@@ -683,6 +694,8 @@ def make_handler(remote, port):
                     pass  # Legacy clients may read status but cannot enable auto sampling.
                 elif self.path == "/api/cloud":
                     remote.set_upload_mode(body.get("mode"))
+                elif self.path == "/api/cloud-stop":
+                    remote.stop_uploads()
                 elif self.path == "/api/upload":
                     remote.upload_recording(body.get("name"), body.get("revision"))
                 elif self.path == "/api/topics":
