@@ -18,7 +18,7 @@ The supplied router reserves **`192.168.1.182`** for the Pi's Ethernet port. Wit
 
 ### 2. Start the robot's normal ROS programs
 
-Start its usual sensors/publishers. In a terminal under the **same normal ROS user**, load the workspace normally used by the robot, if any. This lets setup detect the ROS version, domain and custom-message workspace. Do not change the robot's domain just to match the Pi.
+Start its usual sensors/publishers, then run the installer as the **same normal ROS user**. The installer detects the ROS version, domain and workspace from the current environment or readable running ROS nodes. **Manually loading a workspace is not required in the normal setup.** Keep the robot's existing ROS domain. If detection cannot resolve the intended environment, use the troubleshooting section below.
 
 ### 3. Install and check the bridge once
 

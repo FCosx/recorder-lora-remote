@@ -17,7 +17,7 @@ A ROS 2 data recorder for robot experiments. Robots send topics to a Raspberry P
 **Start with the [Recorder User Manual](docs/user-manual.md) ([中文](docs/user-manual.zh-CN.md)).** It provides copy-and-paste commands for the normal workflow, followed by troubleshooting for special cases:
 
 1. Connect the robot, prepared Pi and router LAN port to the same Ethernet switch.
-2. Start the robot's normal ROS publishers and load their usual workspace.
+2. Start the robot's normal ROS publishers; the installer detects their ROS environment automatically.
 3. Run the manual's installer once: prebuilt x86_64/ARM64 bridge, automatic ROS settings, startup service and a combined setup check.
 4. Open the new **Robot Recorder** application shortcut or `http://192.168.1.182:8080`, the Pi's reserved wired address in the supplied bundle. Select topics and record; inspect, download or delete recordings afterward.
 
