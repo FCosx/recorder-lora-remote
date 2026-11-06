@@ -161,6 +161,24 @@ systemctl --user start robot-recorder-source-bridge.service    # 重新连接
 
 三条是不同操作，检查状态不需要依次执行。直接杀死受管理的桥进程会触发自动重启；用 stop 停止后，下次开机仍会自动启动。
 
+### 立即停止并关闭开机自启
+
+不再使用记录器时，先结束正在进行的录制。在**机器人**上，使用安装桥时的同一账号运行：
+
+```bash
+systemctl --user disable --now robot-recorder-source-bridge.service
+```
+
+这条命令会立即停止桥，并关闭开机自启；安装文件和已保存的设置仍会保留。仅关闭浏览器或拔掉套装连接，不会关闭开机自启。
+
+以后需要重新启动，并恢复开机自启时运行：
+
+```bash
+systemctl --user enable --now robot-recorder-source-bridge.service
+```
+
+无需重新安装。重新运行安装器也会启用开机自启。
+
 ### 树莓派地址或机器人 ROS 域改变
 
 先停止录制。在**机器人**输入新的有线地址和发布器使用的 ROS 域，重新配置并重启自动服务，无需重新编译：

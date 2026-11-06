@@ -161,6 +161,24 @@ systemctl --user start robot-recorder-source-bridge.service    # Reconnect
 
 These are alternatives; do not run all three for a status check. Killing a managed bridge process causes it to restart automatically. A stopped service remains enabled for the next boot.
 
+### Stop now and disable automatic startup
+
+When finished using the recorder, stop any recording first. On the **robot**, using the same account that installed the bridge, run:
+
+```bash
+systemctl --user disable --now robot-recorder-source-bridge.service
+```
+
+This stops the bridge immediately and prevents it from starting after reboot. Installed files and saved settings remain. Closing the browser or disconnecting the bundle alone does not disable automatic startup.
+
+To start it again and restore automatic startup later:
+
+```bash
+systemctl --user enable --now robot-recorder-source-bridge.service
+```
+
+No reinstall is needed. Rerunning the installer also enables automatic startup.
+
 ### Pi address or robot domain changed
 
 Stop recording first. On the **robot**, enter the new wired IP and the publishers' ROS domain. This refreshes configuration and restarts the automatic service without rebuilding:
