@@ -10,38 +10,44 @@ Only the **robot publishing ROS topics** needs the bridge setup below. A compute
 
 ### 1. Connect the bundle
 
-Power on the router, switch and Pi. Connect the router's **LAN** port, Pi and robot to the same switch. Connect the operator laptop too, if used. Wait for the Pi to boot.
+Power on the router, switch and Pi. Connect the router's **LAN** port, Pi and robot to the same switch. Connect the operator laptop too, if used. Keep the prepared SSD connected. Wait for the Pi to boot; if it stays at a red power LED, press its power button once.
 
 The supplied router reserves **`192.168.1.182`** for the Pi's Ethernet port. With this bundle, no address discovery or Pi login is normally needed. The robot's Ethernet should use automatic addressing (DHCP). Its existing Wi-Fi may stay connected. If the robot must retain a different fixed Ethernet address, use the troubleshooting section before changing it.
 
 **Finish the bridge setup and start the robot's publishers before opening the UI.** If using another router or a changed bundle address, first follow “Find the Pi's wired address” below and replace `192.168.1.182` in the commands.
 
-### 2. Install the robot bridge once
+### 2. Start the robot's normal ROS programs
 
-Run the following on the **robot**, as the normal ROS user. ROS 2 **Humble or Jazzy** must already be installed, and the robot needs internet for this first installation. If the robot uses a custom ROS workspace, source its usual setup script in this terminal first.
+Start its usual sensors/publishers. In a terminal under the **same normal ROS user**, load the workspace normally used by the robot, if any. This lets setup detect the ROS version, domain and custom-message workspace. Do not change the robot's domain just to match the Pi.
+
+### 3. Install and check the bridge once
+
+ROS 2 **Humble or Jazzy** must already be installed. Missing dependencies need internet access; the prebuilt bridge itself downloads from the Pi. Run on the **robot**, without putting `sudo` before the installer:
 
 ```bash
-curl -q --noproxy '*' -fL --retry 2 --connect-timeout 5 --max-time 60   http://192.168.1.182:8080/setup/install_robot_bridge.sh   -o /tmp/install_robot_bridge.sh &&
+curl -q --noproxy '*' -fL --retry 2 --connect-timeout 5 --max-time 60 \
+  http://192.168.1.182:8080/setup/install_robot_bridge.sh \
+  -o /tmp/install_robot_bridge.sh &&
 bash /tmp/install_robot_bridge.sh --pi-url http://192.168.1.182:8080
 ```
 
-Enter the **robot's sudo password** when asked. The installer detects Humble/Jazzy, installs dependencies, builds the corrected bridge automatically and enables its startup service. If both ROS versions are installed, choose the one used by the robot. The first build may take a while; wait for **Setup complete**. If interrupted, fix the reported error or restore internet, then run the same block again while the recorder is idle.
+Enter the **robot's sudo password** if asked. Setup selects a verified x86_64 or ARM64 bridge; no user compilation is required. It prints the detected ROS version, domain and workspace. Conflicting choices require your input; when no domain information is available, it visibly defaults to **0**. Existing installations retain their saved settings and folder.
 
-The bridge starts automatically when the robot boots, waits for the wired network and reconnects when the Pi becomes available. **The setup terminal can be closed.** Do not start a second manual bridge. Existing installations receive automatic startup by rerunning the same setup block.
+The final check reports Ethernet, the Pi recorder, the single corrected bridge, its helper and visible topics. Follow any **FAIL** instruction before recording. A **WARN** for no topics means the publishers may not be running yet. Wait for **Setup complete**; if interrupted, fix the reported problem and rerun while the recorder is idle.
 
-The default robot ROS domain is **0**. If its publishers use a different domain, append `--domain N` to the final command, replacing `N` with that domain. The Pi UI stays on domain **1**; the two sides intentionally use different domains.
+The bridge starts automatically at boot, waits for Ethernet and reconnects when the Pi is available. **Close the setup terminal; do not start another bridge manually.** A **Robot Recorder** shortcut is added to the robot's application menu; some desktops also show a desktop copy. Setup does not open the browser before you finish.
 
-### 3. Start the robot and open the UI
+### 4. Open the recorder
 
-Start the robot's normal sensors and ROS publishers. On the robot or another computer connected to the switch, open:
+On the robot, open **Robot Recorder** from the application menu. Alternatively, on any computer connected to the switch, open:
 
 **http://192.168.1.182:8080**
 
-Include `http://` and `:8080`. The optional shortcut **http://robot-recorder.local:8080** works only where local-name resolution is available; it may select the Pi's Wi-Fi address. Prefer the reserved wired address for this bundle.
+Keep the **Pi UI domain at 1**. The robot keeps its own domain; the bridge connects them. Include `http://` and `:8080`. The optional **http://robot-recorder.local:8080** depends on local-name support and may select Wi-Fi; prefer the bundle's wired address. A browser-only computer can bookmark that address and needs no installation.
 
 ## Everyday recording
 
-After the one-time setup, power on the bundle and robot, start the robot's publishers, then open the UI. No bridge command or internet connection is required for routine local recording.
+After the one-time setup, power on the bundle and robot, start the robot's publishers, then open Robot Recorder or the saved browser address. No bridge command or internet connection is required for routine local recording.
 
 1. Wait for **Ready to record**. Keep the Pi's ROS domain at **1**.
 2. Click **Refresh topics**, then select the topics to save. Under **Split MCAP files**, optionally enter a size in MiB, a duration in seconds, or both. Leave both blank for one file; the first limit reached starts a new segment.
@@ -114,6 +120,27 @@ ip -4 route get 192.168.1.182
 ```
 
 Do not guess an address. This addition is lost after reboot; ask the administrator to make it persistent if needed. Wi-Fi may stay connected. The bridge waits until a direct wired route to the Pi is available.
+
+### Run the combined setup check
+
+On the **robot**, using the installation account:
+
+```bash
+python3 -B ~/robot-recorder/tools/check_robot_setup.py
+```
+
+This is read-only and safe during recording: it does not restart services, subscribe to sensor streams or estimate bandwidth. For a custom installation folder, replace `~/robot-recorder` with that folder.
+
+### ROS settings were not detected
+
+Start the intended ROS programs under your normal account, or source their usual workspace, then rerun setup. Root/container processes or domains set inside a program may not be readable. Specify only the needed overrides, replacing the example values below:
+
+```bash
+bash /tmp/install_robot_bridge.sh --pi-url http://192.168.1.182:8080 \
+  --ros-distro humble --domain 5 --setup "$HOME/robot_ws/install/setup.bash"
+```
+
+`--domain` changes the robot bridge, not the robot's publishers or Pi UI. `--setup` points to an existing workspace; it does not build one. If no compatible prebuilt package is available, setup stops without replacing the existing bridge. Ask the maintainer to supply a tested package; a manual build is not part of normal user setup.
 
 ### Check, restart or stop the robot bridge
 

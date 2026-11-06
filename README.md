@@ -17,11 +17,11 @@ A ROS 2 data recorder for robot experiments. Robots send topics to a Raspberry P
 **Start with the [Recorder User Manual](docs/user-manual.md) ([中文](docs/user-manual.zh-CN.md)).** It provides copy-and-paste commands for the normal workflow, followed by troubleshooting for special cases:
 
 1. Connect the robot, prepared Pi and router LAN port to the same Ethernet switch.
-2. On the robot publishing ROS topics, run the manual's Humble/Jazzy bridge installer once. It enables automatic startup.
-3. Start the robot's sensors and publishers; finish setup before opening the UI.
-4. Open `http://192.168.1.182:8080`, the Pi's reserved wired address in the supplied bundle. Select topics and record; inspect, download or delete recordings afterward.
+2. Start the robot's normal ROS publishers and load their usual workspace.
+3. Run the manual's installer once: prebuilt x86_64/ARM64 bridge, automatic ROS settings, startup service and a combined setup check.
+4. Open the new **Robot Recorder** application shortcut or `http://192.168.1.182:8080`, the Pi's reserved wired address in the supplied bundle. Select topics and record; inspect, download or delete recordings afterward.
 
-The Pi must already be configured by the maintainer; the robot needs ROS 2 Humble or Jazzy. Installing the robot bridge requires internet access. Routine local recording does not. You do not need to clone this repository first.
+The Pi must already be configured by the maintainer; the robot needs ROS 2 Humble or Jazzy. Missing ROS dependencies require internet access; the bridge package downloads from the Pi. No user compilation is required. Routine local recording does not. You do not need to clone this repository first.
 
 ## Everyday use
 
@@ -33,7 +33,7 @@ Select topics and begin recording. After stopping, wait for finalization before 
 
 For control outside the local network, add compatible USB LoRa radios and an operator laptop. Follow the [LoRa Remote Guide](docs/lora-remote.md) ([中文](docs/lora-remote.zh-CN.md)). It provides topic selection, Start/Stop, status and brief recording management. Sensor data continues over the robot-to-Pi Ethernet/Zenoh link.
 
-The LoRa laptop can be installed offline and operated without the Pi's IP or access to the site network. GitHub downloads require internet; the maintainer supplies the first-time pairing passcode privately. Status polling waits one second after each reply by default. The LoRa page does not download recordings.
+The LoRa laptop can be installed offline and operated without the Pi's IP or access to the site network. GitHub downloads require internet; the maintainer supplies the first-time pairing passcode privately. The installer adds **Robot Recorder LoRa** to the application menu; opening it starts/reuses one background controller. No terminal needs to stay open. Status polling waits one second after each reply by default. The LoRa page does not download recordings.
 
 ## Repository contents
 

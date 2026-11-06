@@ -46,15 +46,17 @@ def main():
     encrypt = commands.add_parser("encrypt-pairing", help="Maintainer: protect a pairing file for public distribution")
     encrypt.add_argument("--config", type=Path, default=Path.home() / ".config/robot-recorder-lora/remote.json")
     encrypt.add_argument("--output", type=Path, required=True)
-    for role in ("agent", "remote"):
+    for role in ("agent", "remote", "open", "shortcut", "remote-stop"):
         command = commands.add_parser(role)
         command.add_argument("--config", type=Path,
                              default=Path.home() / ".config/robot-recorder-lora" / ("pi.json" if role == "agent" else "remote.json"))
         command.add_argument("--port", help="Serial port; auto-detects when exactly one CH340 is connected")
-        if role == "remote":
+        if role in ("remote", "open"):
             command.add_argument("--web-port", type=int, default=8081)
             command.add_argument("--poll-seconds", type=int, choices=(1, 2), default=1,
                                  help="Wait after each status reply: 1 is default; 2 reduces radio traffic")
+            if role == 'open':
+                command.add_argument('--no-browser',action='store_true',help='Start/reuse the controller without opening a browser')
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     if args.command == "pair":
@@ -101,9 +103,24 @@ def main():
         if args.command == "pair-status":
             print(json.dumps(pairing_status(args.config)))
             return
-        if args.command == "remote" and not args.config.expanduser().exists():
+        if args.command in ("remote","open","shortcut") and not args.config.expanduser().exists():
             parser.error("Recorder pairing is missing. Run the downloaded installer with --pairing /path/to/recorder-pairing.json supplied by your recorder maintainer.")
-        config, key, state_file = load_config(args.config, args.command)
+        if args.command == 'remote-stop':
+            from lora.launcher import stop_remote
+            stop_remote()
+            return
+        config, key, state_file = load_config(args.config, 'agent' if args.command == 'agent' else 'remote')
+        if args.command == 'shortcut':
+            from lora.launcher import shortcut
+            shortcut(ROOT,args.config.expanduser().resolve())
+            print('Robot Recorder LoRa shortcut added to the application menu. It starts the controller only when opened.')
+            return
+        if args.command == 'open':
+            from lora.launcher import open_remote
+            if not 1 <= args.web_port <= 65535:
+                parser.error('web port must be between 1 and 65535')
+            open_remote(ROOT,args.config,key,args.web_port,args.port,args.poll_seconds,not args.no_browser)
+            return
         port = select_port(args.port)
         if args.command == "agent":
             from lora.agent import run_agent

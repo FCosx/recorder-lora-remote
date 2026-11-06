@@ -14,6 +14,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from .common import SerialLink
+from .launcher import controller_lock, fingerprint
 from .protocol import CLOUD_PHASES, CATALOG_REQUEST, CATALOG_RESPONSE, JSONTransfer, RECORDING_NAME, SPLIT_LIMITS, SYNC_RESPONSE, ZERO, Op, Request, Response, Result, RESULT_TEXT, State, recording_token, split_limits
 
 
@@ -673,6 +674,8 @@ def make_handler(remote, port):
                 self.reply(200, html, "text/html; charset=utf-8")
             elif path == "/api/status":
                 self.reply(200, remote.status())
+            elif path == "/api/launcher-info":
+                self.reply(200, {"application":"robot-recorder-lora", "pairing":fingerprint(remote.key)})
             else:
                 self.reply(404, {"error": "Unknown endpoint"})
 
@@ -723,6 +726,11 @@ def make_handler(remote, port):
 
 
 def run_remote(config, key, state_file, port, web_port, poll_seconds=1):
+    with controller_lock(key):
+        _serve_remote(config, key, state_file, port, web_port, poll_seconds)
+
+
+def _serve_remote(config, key, state_file, port, web_port, poll_seconds=1):
     remote = Remote(key, state_file, port, poll_seconds=poll_seconds)
     server = ThreadingHTTPServer(("127.0.0.1", web_port), make_handler(remote, web_port))
     server.daemon_threads = True

@@ -23,13 +23,23 @@ python3 recorder-lora-remote.pyz install
 
 ## 每次使用
 
-接好天线，插入配套电台，关闭占用串口的程序，然后运行并保持终端开启：
+接好天线，插入配套电台，关闭其他占用串口的程序。在操作笔记本的应用菜单中打开 **Robot Recorder LoRa**。安装器会创建该入口；部分桌面也会显示桌面副本。它会在后台启动控制端，并打开本机的 **http://127.0.0.1:8081**。再次打开会复用已有控制端。
+
+如果找不到应用菜单入口，可运行下列命令，随后可以关闭终端：
 
 ```bash
-python3 -B ~/robot-recorder/tools/lora_recorder.py remote
+python3 -B ~/robot-recorder/tools/lora_recorder.py open
 ```
 
-在**这台笔记本**打开 **http://127.0.0.1:8081**。等待 `Radio connected`，刷新话题并勾选所需项，然后开始/停止录制。关闭终端只会停止远程控制，不会结束树莓派正在进行的录制。同一配对只运行一个控制端。
+等待 **Radio connected**，刷新话题并勾选所需项，然后开始/停止录制。**关闭浏览器或启动终端不会停止后台控制端。** 需要停止时运行：
+
+```bash
+python3 -B ~/robot-recorder/tools/lora_recorder.py remote-stop
+```
+
+停止控制端不会结束树莓派正在进行的录制。控制端默认不开机自启，使用时打开入口即可。同一用户账号下，同一配对只允许一个控制端；换另一台笔记本控制前，先停止原笔记本上的控制端。
+
+也可继续使用前台终端方式：先停止后台控制端，再运行 `python3 -B ~/robot-recorder/tools/lora_recorder.py remote` 并保留终端；Ctrl+C 停止该前台程序。两种方式都不需要树莓派 IP 或网络连接。
 
 状态请求在收到回复后默认等待 1 秒，再加无线传输时间。录制计时器会在本机连续递增并标为估计；大小、空间等数值以树莓派回复为准。
 
@@ -50,30 +60,35 @@ python3 -B ~/robot-recorder/tools/lora_recorder.py remote
 ## 常见问题
 
 - 串口权限不足：`sudo usermod -aG dialout "$USER"`，注销后重新登录。
-- 多个串口：在启动命令末尾添加 `--port /dev/ttyUSB0`，选择正确电台。
+- 多个串口：先停止控制端，再运行 `python3 -B ~/robot-recorder/tools/lora_recorder.py open --port /dev/ttyUSB0`，选择正确电台。非默认端口以后也使用这条启动命令。
 - 找不到电台：检查 USB 连接及 CH340 驱动；BRLTTY 可能占用串口。
 - 缺少 OpenSSL：Ubuntu 运行 `sudo apt install openssl`。
+- 启动入口报错：运行 `journalctl --user -u robot-recorder-lora-remote.service -n 20 --no-pager` 查看原因。旧的前台控制端仍在运行时，先按 Ctrl+C 停止，再打开新入口。
 - 无线无回复：检查两端电源、天线、匹配的电台设置，以及树莓派录制/LoRa 服务。
 
 配对口令需私下交付；不要公开解密后的 `remote.json` 或私有预配对安装包。配对文件加密不等于无线数据加密。远距离效果需实测。
 
-安装包含 pySerial 3.5，许可见 [第三方说明](../THIRD_PARTY_NOTICES.md)。
+安装包含 pySerial 3.5，许可见 [第三方说明](https://github.com/FCosx/recorder-lora-remote/blob/main/THIRD_PARTY_NOTICES.md)。
 
 ## 状态更新间隔
 
 默认在每次状态回复后等待一秒，再发送下一次状态请求；无线传输和重试还需额外时间，并不保证每秒收到一次状态。按前面的普通启动命令即可使用，无需额外参数。计时器仍在本机平滑递增。
 
-若远距离链路不稳定，或希望减少状态流量、为话题和录制列表留出更多无线容量，可按 Ctrl+C 停止控制程序，再改用两秒：
+如需减少状态流量，为话题和录制列表留出更多无线容量，先停止控制端，再改用两秒间隔：
 
 ```bash
-python3 -B ~/robot-recorder/tools/lora_recorder.py remote --poll-seconds 2
+python3 -B ~/robot-recorder/tools/lora_recorder.py remote-stop
+python3 -B ~/robot-recorder/tools/lora_recorder.py open --poll-seconds 2
 ```
 
-恢复默认一秒：按 Ctrl+C，再运行普通启动命令并刷新页面。每次只运行一个控制端；无需重新配对或重启树莓派。
+恢复默认一秒：
 
 ```bash
-python3 -B ~/robot-recorder/tools/lora_recorder.py remote
+python3 -B ~/robot-recorder/tools/lora_recorder.py remote-stop
+python3 -B ~/robot-recorder/tools/lora_recorder.py open
 ```
+
+每次只运行一个控制端；无需重新配对或重启树莓派。
 
 此设置只影响 LoRa 状态轮询，不改变以太网/Zenoh 数据通道或录制参数。两秒版本 v0.4.0 仍保留供完整回退；远距离性能需在实际位置验证。
 

@@ -1,0 +1,42 @@
+{
+  "format": 1,
+  "bridge_version": "1.10.1",
+  "source_sha256": "2c66aec0ab999d346c17497f2a6e84600478e57a197bb8c1dc5e6dd5bbbe5c03",
+  "patch_sha256": "30462d2b7c3a20360dc968d5b4f68ac219061d2bd10f1940f88fbb739bc03827",
+  "packages": [
+    {
+      "bridge_version": "1.10.1",
+      "arch": "aarch64",
+      "min_glibc": "2.35",
+      "source_sha256": "2c66aec0ab999d346c17497f2a6e84600478e57a197bb8c1dc5e6dd5bbbe5c03",
+      "patch_sha256": "30462d2b7c3a20360dc968d5b4f68ac219061d2bd10f1940f88fbb739bc03827",
+      "binary_sha256": "e3a3f2407982cc2cad28a469f4c3ff6636584fe4290aa9d8f9a56b209aa6792e",
+      "rust_version": "1.97.1",
+      "target": "aarch64-unknown-linux-gnu.2.35",
+      "zig_version": "0.14.1",
+      "file": "bridge-1.10.1-route-listener-v1-aarch64.tar.gz",
+      "sha256": "8aa3941215d8bd4f66ade4fb89870c9be105f6375af3b767aef07a61a15caf65",
+      "ros_distros": [
+        "humble",
+        "jazzy"
+      ]
+    },
+    {
+      "bridge_version": "1.10.1",
+      "arch": "x86_64",
+      "min_glibc": "2.35",
+      "source_sha256": "2c66aec0ab999d346c17497f2a6e84600478e57a197bb8c1dc5e6dd5bbbe5c03",
+      "patch_sha256": "30462d2b7c3a20360dc968d5b4f68ac219061d2bd10f1940f88fbb739bc03827",
+      "binary_sha256": "31dfda76cc0a83fe4b49466c718497f040467d17ae8cf3c50981dfb3000910ae",
+      "rust_version": "1.97.1",
+      "target": "x86_64-unknown-linux-gnu.2.35",
+      "zig_version": "0.14.1",
+      "file": "bridge-1.10.1-route-listener-v1-x86_64.tar.gz",
+      "sha256": "fac66cf88dd80a6bb0702b21efeb944fddaeb0a1f2bb8fa4711793614ed6357a",
+      "ros_distros": [
+        "humble",
+        "jazzy"
+      ]
+    }
+  ]
+}

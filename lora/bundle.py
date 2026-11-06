@@ -18,8 +18,12 @@ def build_bundle(root, config_path, destination, encrypted_pairing=None):
     for path in (root / "lora").glob("*.py"):
         files[path.relative_to(root).as_posix()] = path.read_bytes()
     for name in ("lora/remote.html", "tools/lora_recorder.py", "tools/lora_offline_bootstrap.py",
-                 "lora/licenses/pyserial-LICENSE.txt", "docs/lora-remote.md"):
+                 "lora/licenses/pyserial-LICENSE.txt", "tools/desktop_shortcuts.py"):
         files[name] = (root / name).read_bytes()
+    for name in ('lora-remote.md','lora-remote.en.md','lora-remote.zh-CN.md'):
+        path=root/'docs'/name
+        if path.is_file():
+            files['docs/'+name]=path.read_bytes()
     files["__main__.py"] = (root / "tools/lora_offline_bootstrap.py").read_bytes()
     serial_root = Path(serial.__file__).resolve().parent
     for path in serial_root.rglob("*.py"):

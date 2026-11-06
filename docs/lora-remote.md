@@ -25,13 +25,23 @@ Downloading requires internet. The maintainer can also supply the installer by U
 
 ## Everyday use
 
-Attach the antenna, plug in the compatible radio and close programs using its serial port. Run this on the **operator laptop** and keep the terminal open:
+Attach the antenna, plug in the radio, and close other programs using its serial port. Open **Robot Recorder LoRa** from the operator laptop's application menu. The installer creates this shortcut; some desktops also show a desktop copy. It starts the controller in the background and opens **http://127.0.0.1:8081** on that laptop. Opening it again reuses the same controller.
+
+If the menu entry is unavailable, run this command; the terminal can then be closed:
 
 ```bash
-python3 -B ~/robot-recorder/tools/lora_recorder.py remote
+python3 -B ~/robot-recorder/tools/lora_recorder.py open
 ```
 
-Open **http://127.0.0.1:8081** in **that laptop's browser**. Wait for `Radio connected`, click `Refresh topics`, select topics, and begin/stop recording. Closing the terminal stops remote control and status updates; it does not stop an ongoing recording on the Pi. Run only one control client for the same pairing at a time.
+Wait for **Radio connected**, refresh topics, select the required ones, then begin/stop recording. **Closing the browser or launch terminal does not stop the background controller.** To stop it explicitly:
+
+```bash
+python3 -B ~/robot-recorder/tools/lora_recorder.py remote-stop
+```
+
+Stopping the controller does not stop an ongoing recording on the Pi. The controller is not automatically enabled at boot; open the launcher when needed. One controller is allowed per pairing on the same user account; close a controller on another laptop before switching laptops.
+
+For foreground terminal operation instead, first stop the background controller, then run `python3 -B ~/robot-recorder/tools/lora_recorder.py remote` and keep that terminal open. Ctrl+C stops this foreground version. No Pi IP or network connection is needed for either mode.
 
 By default, status requests wait one second after each reply, plus radio transmission time. The recording timer advances locally and is marked as estimated; size and free space use the latest Pi reply.
 
@@ -54,29 +64,32 @@ After recording finishes, the remote automatically refreshes the list once. When
 ## Troubleshooting
 
 - **Serial permission denied:** run `sudo usermod -aG dialout "$USER"`, then log out and back in.
-- **Multiple serial ports:** append `--port /dev/ttyUSB0` to the startup command, choosing the correct radio port.
+- **Multiple serial ports:** stop the controller, then run `python3 -B ~/robot-recorder/tools/lora_recorder.py open --port /dev/ttyUSB0`, choosing the correct radio. Use that command again when starting with a non-default port.
 - **Radio not found:** check USB connections and the CH340 driver. BRLTTY may claim the serial interface.
 - **OpenSSL missing:** on Ubuntu, run `sudo apt install openssl`.
+- **Launcher error:** check `journalctl --user -u robot-recorder-lora-remote.service -n 20 --no-pager`. If an older foreground controller is running, stop it with Ctrl+C before opening the new launcher.
 - **No radio reply:** check power, antennas, matching radio settings, and the Pi's recorder/LoRa services.
 
 Share the pairing passcode privately. Do not publish decrypted `remote.json` files or private pre-paired installers. Encrypting a pairing file does not encrypt the radio messages. Range must be tested at the actual location.
 
-The installer includes pySerial 3.5; see [Third-party notices](../THIRD_PARTY_NOTICES.md).
+The installer includes pySerial 3.5; see [Third-party notices](https://github.com/FCosx/recorder-lora-remote/blob/main/THIRD_PARTY_NOTICES.md).
 
 ## Status update interval
 
 The default is a one-second wait after each reply before the next status request. Transmission and retries take additional time, so this does not guarantee a fresh update every second. The normal startup command uses this default; the recording timer remains smooth between replies.
 
-To reduce radio traffic and leave more capacity for topic/recording lists, press Ctrl+C, then restart with a two-second wait:
+To use a two-second wait, stop the controller and open it with an explicit interval:
 
 ```bash
-python3 -B ~/robot-recorder/tools/lora_recorder.py remote --poll-seconds 2
+python3 -B ~/robot-recorder/tools/lora_recorder.py remote-stop
+python3 -B ~/robot-recorder/tools/lora_recorder.py open --poll-seconds 2
 ```
 
-To restore one second, press Ctrl+C, restart normally and reload the page:
+To restore the default, stop it and open normally:
 
 ```bash
-python3 -B ~/robot-recorder/tools/lora_recorder.py remote
+python3 -B ~/robot-recorder/tools/lora_recorder.py remote-stop
+python3 -B ~/robot-recorder/tools/lora_recorder.py open
 ```
 
 Run only one client at a time. No re-pairing or Pi restart is needed. This option changes LoRa status polling only; Ethernet/Zenoh transport and recording settings stay the same. Release v0.4.0 remains available for a full rollback to the earlier two-second version. Check long-distance behavior in the intended environment.

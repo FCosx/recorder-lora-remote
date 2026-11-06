@@ -32,7 +32,8 @@ class InstallerTests(unittest.TestCase):
         self.config = self.root / 'new user config'
         self.empty_bin = self.root / 'empty-bin'
         self.empty_bin.mkdir()
-        self.environment = dict(os.environ, PATH=str(self.empty_bin), PYTHONDONTWRITEBYTECODE='1')
+        self.environment = dict(os.environ, PATH=str(self.empty_bin), PYTHONDONTWRITEBYTECODE='1',
+                                HOME=str(self.root/'home'), XDG_DATA_HOME=str(self.root/'data'))
 
     def install(self, bundle=None, pairing=None, passcode=None):
         command = [sys.executable, '-S', str(bundle or self.bundle), 'install',
@@ -125,6 +126,11 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(self.bundle.stat().st_mode & 0o777, 0o600)
         self.assertEqual((self.target / 'lora/remote.py').read_bytes(), (ROOT / 'lora/remote.py').read_bytes())
         self.assertTrue((self.target / 'vendor/pyserial-LICENSE.txt').is_file())
+        self.assertTrue((self.target / 'lora/launcher.py').is_file())
+        self.assertTrue((self.root/'data/applications/robot-recorder-lora.desktop').is_file())
+        for name in ('lora-remote.md','lora-remote.en.md','lora-remote.zh-CN.md'):
+            if (ROOT/'docs'/name).is_file():
+                self.assertEqual((self.target/'docs'/name).read_bytes(),(ROOT/'docs'/name).read_bytes())
         # -S excludes the system pySerial. The installed launcher supplies its own.
         check = subprocess.run([sys.executable, '-S', '-c',
             'import runpy,sys; runpy.run_path(sys.argv[1],run_name="serial_probe"); import serial; print(serial.__file__); print(serial.__version__)',

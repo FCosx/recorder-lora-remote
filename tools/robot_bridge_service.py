@@ -87,9 +87,13 @@ def wired_route(host, runner=subprocess.run, sys_net=Path('/sys/class/net')):
         return None
 
 
-def launch_command(root, config, setups):
+def launch_command(root, config, setups, domain=None, distro=None):
     commands = ['set -e']
     commands += ['source ' + shlex.quote(path) for path in setups]
+    if domain is not None:
+        commands += ['unset ROS_LOCALHOST_ONLY',
+                     'export ROS_DOMAIN_ID=' + str(domain) + ' RMW_IMPLEMENTATION=rmw_cyclonedds_cpp '
+                     'ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET ROS_DISTRO=' + shlex.quote(distro)]
     commands += ['exec bash ' + shlex.quote(str(root / 'tools/start_zenoh_bridge.sh')) + ' ' +
                  shlex.quote(str(config))]
     return '; '.join(commands)
@@ -109,7 +113,8 @@ def run(settings):
                        ROS_DOMAIN_ID=str(value['domain']), RMW_IMPLEMENTATION='rmw_cyclonedds_cpp',
                        ROS_AUTOMATIC_DISCOVERY_RANGE='SUBNET')
     environment.pop('ROS_LOCALHOST_ONLY', None)
-    os.execve('/bin/bash', ['bash', '-c', launch_command(root, config, value['setup_files'])], environment)
+    os.execve('/bin/bash', ['bash', '-c', launch_command(root, config, value['setup_files'],
+              value['domain'], value['ros_distro'])], environment)
 
 
 def manual_launchers(root, proc_root=Path('/proc')):
@@ -181,9 +186,20 @@ def install(args):
     if active or manual:
         # Never interrupt an in-progress recording, including an update run.
         assert_idle(args.pi_url)
+    plan_path = getattr(args, 'environment_plan', None)
+    if plan_path:
+        plan = json.loads(plan_path.read_text())
+        if plan.get('ros_distro') != args.ros_distro or plan.get('domain') != domain:
+            raise ValueError('Resolved ROS settings do not match the bridge configuration')
+        base = str(Path('/opt/ros') / args.ros_distro / 'setup.bash')
+        if not isinstance(plan.get('setup_files'), list) or not plan['setup_files'] or plan['setup_files'][0] != base:
+            raise ValueError('Invalid resolved ROS workspace list')
+        setups = setup_files(args.ros_distro, environment={}, extra=plan['setup_files'][1:])
+    else:
+        setups = setup_files(args.ros_distro, extra=args.setup)
     values = {'version': 1, 'root': str(root), 'config': str(config), 'ros_distro': args.ros_distro,
               'domain': domain, 'pi_url': args.pi_url.rstrip('/'),
-              'setup_files': setup_files(args.ros_distro, extra=args.setup)}
+              'setup_files': setups}
     settings = root / 'zenoh/robot-service.json'
     settings.write_text(json.dumps(values, indent=2) + '\n')
     unit.parent.mkdir(parents=True, exist_ok=True)
@@ -195,6 +211,11 @@ def install(args):
         subprocess.run(['sudo', 'loginctl', 'enable-linger', getpass.getuser()], check=True)
     subprocess.run(manager + ['daemon-reload'], check=True)
     subprocess.run(manager + ['enable', UNIT], check=True)
+    if active or manual:
+        assert_idle(args.pi_url)
+    marker = getattr(args, 'activation_marker', None)
+    if marker:
+        marker.touch()
     for pid in manual:
         print(f'Replacing the existing manual recorder bridge (PID {pid}).', flush=True)
         os.kill(pid, signal.SIGTERM)
@@ -220,6 +241,8 @@ def main():
     setup.add_argument('--ros-distro', choices=('humble', 'jazzy'), required=True)
     setup.add_argument('--pi-url', required=True)
     setup.add_argument('--setup', action='append', default=[])
+    setup.add_argument('--environment-plan', type=Path)
+    setup.add_argument('--activation-marker', type=Path)
     args = parser.parse_args()
     try:
         run(args.settings) if args.command == 'run' else install(args)

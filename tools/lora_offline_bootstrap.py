@@ -91,7 +91,8 @@ def install_path(name):
     path = PurePosixPath(name)
     if path.is_absolute() or ".." in path.parts or "\\" in name:
         return False
-    return (name in ("tools/lora_recorder.py", "tools/lora_offline_bootstrap.py", "docs/lora-remote.md")
+    return (name in ("tools/lora_recorder.py", "tools/lora_offline_bootstrap.py", "tools/desktop_shortcuts.py",
+                    "docs/lora-remote.md", "docs/lora-remote.en.md", "docs/lora-remote.zh-CN.md")
             or (name.startswith("lora/") and path.suffix in (".py", ".html", ".service", ".txt"))
             or (name.startswith("vendor/serial/") and path.suffix == ".py")
             or name == "vendor/pyserial-LICENSE.txt")
@@ -192,6 +193,7 @@ def main():
     parser.add_argument("--directory", type=Path, default=Path.home() / "robot-recorder")
     parser.add_argument("--config-dir", type=Path, default=Path.home() / ".config/robot-recorder-lora")
     parser.add_argument("--pairing", type=Path, help="Optional private or passcode-encrypted recorder pairing file")
+    parser.add_argument('--no-shortcuts',action='store_true',help='Do not create the optional desktop/application-menu launcher')
     args = parser.parse_args()
     try:
         directory, config = install(sys.argv[0], args.directory, args.config_dir, args.pairing)
@@ -203,11 +205,24 @@ def main():
         print("Public software installed. Recorder authorization is still required.")
         print("Get recorder-pairing.json privately from its maintainer, then rerun this installer with --pairing /path/to/recorder-pairing.json")
     print("The remote synchronizes with the Pi over LoRa when it starts; no Pi IP is needed.")
+    shortcut_ready=False
+    if config.exists() and not args.no_shortcuts:
+        result=subprocess.run([sys.executable,'-B',str(directory/'tools/lora_recorder.py'),'shortcut','--config',str(config)],check=False)
+        shortcut_ready=result.returncode == 0
+        if result.returncode:
+            print('Optional desktop shortcut could not be created; the foreground command below still works.')
     import shlex
     command = f"python3 -B {shlex.quote(str(directory / 'tools/lora_recorder.py'))} remote"
     if config != Path.home() / ".config/robot-recorder-lora/remote.json":
         command += " --config " + shlex.quote(str(config))
-    print(f"\nKeep this command running:\n{command}\nThen open http://127.0.0.1:8081 on this laptop.")
+    if shortcut_ready:
+        print('\nOpen Robot Recorder LoRa from the application menu. No terminal needs to remain open.')
+        print('Closing the page does not stop its background controller. It is not enabled automatically at boot.')
+        print('Stop the background controller with: systemctl --user stop robot-recorder-lora-remote.service')
+        print('For foreground terminal use instead (keep it running):\n'+command)
+    else:
+        print(f"\nKeep this command running:\n{command}")
+    print('Control page: http://127.0.0.1:8081 on this laptop.')
 
 
 if __name__ == "__main__":
