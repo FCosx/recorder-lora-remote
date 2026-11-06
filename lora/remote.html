@@ -134,6 +134,7 @@ select{font:inherit;padding:8px 10px;border:1px solid #b9cbd9;border-radius:6px;
 </section>
 <section class="card">
  <div class="row" style="justify-content:space-between"><h2>Available topics</h2><div class="row"><button id="refresh-topics" class="secondary" disabled>Refresh topics</button></div></div>
+ <div class="row"><label for="robot-domain">Robot ROS domain</label><input id="robot-domain" type="number" min="0" max="232" value="0" style="width:75px;padding:8px"><button id="apply-domain" class="secondary" disabled>Apply domain</button><span id="domain-status" class="muted" role="status"></span></div>
  <p id="topic-progress" class="muted" role="status">Refresh to get the topic list over LoRa.</p><div id="topic-list" class="topic-list"></div><p id="selection-count" class="muted" hidden></p><p id="bandwidth-note" class="muted" role="status" hidden></p>
 </section>
 <section class="card">
@@ -179,6 +180,7 @@ function statusPresentation(d){
  if(d.synchronized===false)return {kind:'offline',title:'Synchronizing with Pi',detail:'Wait for radio synchronization before sending a command.'};
  if(d.pending==='start'&&s.state==='idle')return {kind:'recording',title:'Preparing to record',detail:'Start sent · waiting for Pi acknowledgment.'};
  if(d.pending==='stop'&&['starting','recording'].includes(s.state))return {kind:'stopping',title:'Stopping recording…',detail:'Stop sent · waiting for Pi acknowledgment.'};
+ if(s.state==='idle'&&s.robot_domain?.pending!=null)return {kind:'blocked',title:'Applying robot domain…',detail:'Waiting for robot confirmation.'};
  if(s.state==='idle'&&!s.can_start)return {kind:'blocked',title:'Storage too low to start',detail:'Free up space on the Pi before starting a new recording.'};
  if(s.state==='idle')return {kind:'ready',title:'Ready to record',detail:'Recorder is idle. Select topics below, then press Begin recording.'};
  if(s.state==='starting')return {kind:'recording',title:'Preparing to record',detail:s.name||'Waiting for topic data.'};
@@ -250,7 +252,24 @@ function renderBandwidth(d){
  $('bandwidth-note').hidden=!note;
 }
 function metadataReady(d){return !sending&&d.radio_connected&&d.synchronized!==false&&!d.pending&&!d.metadata_loading&&!d.topics_loading}
+let confirmedRobotDomain=null;
+function renderRobotDomain(d){
+ const value=d.status.robot_domain;
+ if(value){
+  if(confirmedRobotDomain===null||confirmedRobotDomain!==value.domain){
+   if(document.activeElement!==$('robot-domain'))$('robot-domain').value=value.domain;
+   if(confirmedRobotDomain!==null)initialTopicRefresh=false;
+   confirmedRobotDomain=value.domain;
+  }
+ }
+ $('domain-status').textContent=value?.pending!=null?`Applying domain ${value.pending}…`:value?.error||(!value?.connected?'Robot connection unavailable':`Current: ${value.domain}`);
+ const busy=sending||!d.radio_connected||d.synchronized===false||Boolean(d.pending)||d.status.state!=='idle'||value?.pending!=null;
+ $('robot-domain').disabled=busy;
+ $('apply-domain').disabled=busy||!value?.connected;
+ $('apply-domain').textContent=d.pending==='domain'||value?.pending!=null?'Applying…':'Apply domain';
+}
 function updateControls(d){
+ renderRobotDomain(d);
  $('dismiss-notice').disabled=sending||!d.radio_connected;
  renderBandwidth(d);
  $('start').disabled=sending||!d.can_start||d.topics_loading||chosen.size===0||topicRevision==='0000000000000000';
@@ -345,7 +364,7 @@ function render(d){
  const view=statusPresentation(d);$('state').textContent=view.title;$('status').className='recorder-status is-'+view.kind;$('name').textContent=view.detail;
  const linkWarning=live?robotLinkWarning(s):'';$('robot-link-warning').hidden=!linkWarning;$('robot-link-warning').textContent=linkWarning;
  $('bag').textContent=bytes(s.bag_bytes);$('free').textContent=bytes(s.free_bytes);$('total').textContent=s.total_bytes==null?'Storage unavailable':`of ${bytes(s.total_bytes)} total`;
- const available=Number.isFinite(s.free_bytes)&&Number.isFinite(s.total_bytes)&&s.total_bytes>0,critical=available&&!s.can_start;
+ const available=Number.isFinite(s.free_bytes)&&Number.isFinite(s.total_bytes)&&s.total_bytes>0,critical=available&&!s.can_start&&s.robot_domain?.pending==null;
  $('free-space-card').classList.toggle('is-warning',available&&s.storage_warning&&!critical);$('free-space-card').classList.toggle('is-critical',critical);
  $('storage-meter').hidden=!available;if(available){$('storage-meter').value=Math.max(0,Math.min(100,100*s.free_bytes/s.total_bytes));$('storage-meter').setAttribute('aria-valuetext',`${bytes(s.free_bytes)} free of ${bytes(s.total_bytes)}`)}
  $('storage-notice').hidden=!(available&&(critical||s.storage_warning));$('storage-notice').textContent=critical?'Storage too low to record':'Pi storage is low';
@@ -367,6 +386,7 @@ async function command(action,extra={}){
  $('notice').textContent=`Sending ${action}…`;
  try{const r=await fetch('/api/'+action,{method:'POST',headers:{'X-LoRa-Control':'__CONTROL_TOKEN__','Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(3000)});const d=await r.json();if(!r.ok)throw Error(d.error||'Request rejected');feedback.clear();const snapshot=await fetch('/api/status',{signal:AbortSignal.timeout(3000)});if(snapshot.ok){lastStatus=await snapshot.json();render(lastStatus)}$('notice').textContent=['start','stop','delete','upload','cloud','cloud-stop'].includes(action)?`Sending ${action} · waiting for Pi acknowledgment…`:'Loading over LoRa…'}catch(e){feedback.fail(e.message+'; check updated status before retrying');$('notice').textContent=e.message;$('notice').className='error';$('dismiss-notice').hidden=false}finally{sending=false;localAction=null;if(action==='stop')stopRequestActive=false;if(lastStatus)updateControls(lastStatus)}
 }
+$('apply-domain').onclick=()=>{if($('robot-domain').reportValidity())command('robot-domain',{domain:$('robot-domain').valueAsNumber,revision:lastStatus?.status.robot_domain?.revision})};
 $('cloud-mode').onclick=changeCloudMode;
 $('stop-cloud').onclick=()=>command('cloud-stop');
 $('start').onclick=()=>command('start');$('stop').onclick=()=>command('stop');$('refresh-topics').onclick=()=>command('topics');$('refresh-recordings').onclick=()=>command('recordings');setInterval(updateTimer,100);refresh();

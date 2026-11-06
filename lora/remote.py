@@ -15,7 +15,7 @@ from urllib.parse import urlsplit
 
 from .common import SerialLink
 from .launcher import controller_lock, fingerprint
-from .protocol import CLOUD_PHASES, CATALOG_REQUEST, CATALOG_RESPONSE, JSONTransfer, RECORDING_NAME, SPLIT_LIMITS, SYNC_RESPONSE, ZERO, Op, Request, Response, Result, RESULT_TEXT, State, recording_token, split_limits
+from .protocol import DOMAIN_STATUS_REQUEST, DOMAIN_COMMAND, CLOUD_PHASES, CATALOG_REQUEST, CATALOG_RESPONSE, JSONTransfer, RECORDING_NAME, SPLIT_LIMITS, SYNC_RESPONSE, ZERO, Op, Request, Response, Result, RESULT_TEXT, State, recording_token, split_limits
 
 
 LOG = logging.getLogger(__name__)
@@ -93,6 +93,7 @@ class Remote:
         self.data_transfer = None
         self.recordings_error = None
         self.delete_target = None
+        self.robot_domain = None
         self.segment_sample = None
         self.completion_target = None
         self.completion_refresh_due = False
@@ -115,6 +116,7 @@ class Remote:
             if self.latest and self.segment_sample and self.segment_sample[:2] == (self.latest.boot, self.latest.recording):
                 data["segment_count"] = self.segment_sample[2]
                 data['robot_link'], data['robot_link_interrupted'] = self.segment_sample[3:]
+            data["robot_domain"] = self.robot_domain
             completed_age = None if self.completed_at is None else max(0, time.monotonic() - self.completed_at)
             return {
                 "radio_connected": online, "age_seconds": age,
@@ -178,6 +180,21 @@ class Remote:
             self.bandwidth_transfer = None
             self.pending = "start" if op in (Op.START, Op.START_SELECTED) else "stop"
             self.queue.put_nowait((op, self.latest, data))
+
+    def set_robot_domain(self, domain, revision):
+        with self.lock:
+            status = self.status()
+            if not status['radio_connected'] or not self.synchronized or self.needs_refresh or self.pending:
+                raise ValueError('Wait for fresh radio status before changing the domain')
+            state = self.robot_domain or {}
+            if (self.latest.state != State.IDLE or not state.get('connected') or state.get('pending') is not None
+                    or type(domain) is not int or not 0 <= domain <= 232
+                    or type(revision) is not int or revision != state.get('revision')):
+                raise ValueError('Check fresh robot status and stop recording before changing the domain')
+            self.bandwidth_enabled = False
+            self.bandwidth_transfer = None
+            self.pending = 'domain'
+            self.queue.put_nowait((Op.ROBOT_DOMAIN, self.latest, DOMAIN_COMMAND.pack(domain, revision)))
 
     def check_metadata_ready(self):
         status = self.status()
@@ -475,6 +492,7 @@ class Remote:
             if self.data_transfer and self.data_transfer.get("completion"):
                 self.data_transfer = None
         if restarted:
+            self.robot_domain = None
             self.segment_sample = None
             self.cloud = None
             self.cloud_transfer = None
@@ -488,6 +506,14 @@ class Remote:
         if response.op == Op.STATUS:
             telemetry = response.as_dict()
             self.cloud = telemetry.get('cloud')
+            domain = telemetry.get('robot_domain')
+            if self.robot_domain and domain and domain['revision'] != self.robot_domain['revision']:
+                self.catalog, self.catalog_revision = [], ZERO
+                self.topic_transfer = None
+                self.bandwidth_enabled = False
+                self.bandwidth_transfer = None
+                self.bandwidth_rates = {}
+            self.robot_domain = domain
             if self.cloud:
                 for row in self.recordings:
                     if recording_token(row[0]).hex() == self.cloud.get('recording_token'):
@@ -539,7 +565,7 @@ class Remote:
                     except queue.Empty:
                         with self.lock:
                             if time.monotonic() >= next_poll:
-                                op, snapshot, data = Op.STATUS, None, b""
+                                op, snapshot, data = Op.STATUS, None, DOMAIN_STATUS_REQUEST
                             elif self.topic_transfer is not None:
                                 op, snapshot = Op.TOPICS, None
                                 transfer = self.topic_transfer
@@ -599,7 +625,7 @@ class Remote:
                         self.accept_cloud(response)
                     elif op not in (Op.STATUS, Op.SYNC):
                         result = response.result if response else Result.UNKNOWN
-                        action = "cloud-stop" if op == Op.UPLOAD_STOP else "cloud" if op == Op.UPLOAD_MODE else "upload" if op == Op.UPLOAD else "delete" if op == Op.DELETE else "start" if op in (Op.START, Op.START_SELECTED) else "stop"
+                        action = "domain" if op == Op.ROBOT_DOMAIN else "cloud-stop" if op == Op.UPLOAD_STOP else "cloud" if op == Op.UPLOAD_MODE else "upload" if op == Op.UPLOAD else "delete" if op == Op.DELETE else "start" if op in (Op.START, Op.START_SELECTED) else "stop"
                         self.command = {"id": str(request.number), "action": action, "name": self.delete_target if op in (Op.DELETE, Op.UPLOAD) else None, "result": result.name.lower(),
                                         "message": RESULT_TEXT[result]}
                         self.pending = None
@@ -684,7 +710,7 @@ def make_handler(remote, port):
             if (not self.valid_host() or self.headers.get("X-LoRa-Control") != token
                     or (origin is not None and origin != "http://" + self.headers.get("Host", ""))):
                 return self.reply(403, {"error": "Open the local control page before sending commands"})
-            if self.path not in ("/api/start", "/api/stop", "/api/topics", "/api/recordings", "/api/recording-info", "/api/delete", "/api/bandwidth", "/api/upload", "/api/cloud", "/api/cloud-stop"):
+            if self.path not in ("/api/start", "/api/stop", "/api/topics", "/api/recordings", "/api/recording-info", "/api/delete", "/api/bandwidth", "/api/upload", "/api/cloud", "/api/cloud-stop", "/api/robot-domain"):
                 return self.reply(404, {"error": "Unknown endpoint"})
             try:
                 length = int(self.headers.get("Content-Length", "0"))
@@ -693,7 +719,9 @@ def make_handler(remote, port):
                 body = json.loads(self.rfile.read(length) or b"{}")
                 if not isinstance(body, dict):
                     raise ValueError("Expected an object")
-                if self.path == '/api/bandwidth':
+                if self.path == '/api/robot-domain':
+                    remote.set_robot_domain(body.get('domain'), body.get('revision'))
+                elif self.path == '/api/bandwidth':
                     pass  # Legacy clients may read status but cannot enable auto sampling.
                 elif self.path == "/api/cloud":
                     remote.set_upload_mode(body.get("mode"))

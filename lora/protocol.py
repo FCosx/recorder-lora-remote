@@ -32,6 +32,9 @@ SYNC_RESPONSE = struct.Struct("!16sQ")
 SPLIT_LIMITS = struct.Struct("!II")
 STATUS_SEGMENTS = struct.Struct("!H")
 STATUS_TELEMETRY = struct.Struct("!HB")  # Existing count plus one link-warning byte.
+DOMAIN_STATUS_REQUEST = b'\x01'  # Opt in: old remotes retain their original status layout.
+ROBOT_DOMAIN = struct.Struct('!BBIB')  # confirmed, pending/255, revision, state flags
+DOMAIN_COMMAND = struct.Struct('!BI')
 CLOUD_TELEMETRY = struct.Struct('!BBBB8sH')
 CLOUD_PHASES = ('idle', 'queued', 'compressing', 'uploading', 'verifying', 'paused', 'uploaded', 'error', 'stopped')
 CLOUD_REACH = ('unknown', 'reachable', 'unreachable', 'not_configured')
@@ -55,6 +58,7 @@ class Op(IntEnum):
     UPLOAD_MODE = 11
     CLOUD_STATE = 12
     UPLOAD_STOP = 13
+    ROBOT_DOMAIN = 14
 
 
 class State(IntEnum):
@@ -86,6 +90,7 @@ class Result(IntEnum):
     NOT_FOUND = 17
     TOO_LARGE = 18
     INVALID_SPLIT = 19
+    DOMAIN_UNAVAILABLE = 20
 
 
 RESULT_TEXT = {
@@ -93,7 +98,8 @@ RESULT_TEXT = {
     Result.ACCEPTED: "Command accepted by recorder",
     Result.ALREADY_RECORDING: "A recording is already running",
     Result.ALREADY_IDLE: "Recorder is already idle",
-    Result.BUSY: "Recorder is finishing a bag; wait",
+    Result.BUSY: "Recorder busy; wait for the current operation",
+    Result.DOMAIN_UNAVAILABLE: "Robot domain changed or unavailable; check fresh status and retry",
     Result.NO_TOPICS: "No topics available to record",
     Result.EXPIRED: "Command expired or Pi restarted; refresh and try again",
     Result.CHANGED_RECORDING: "Recording changed; refresh before stopping",
@@ -254,16 +260,24 @@ class Response:
     def as_dict(self):
         segments, link = 65535, 0
         cloud = None
+        robot_domain = None
         if self.op == Op.STATUS:
-            if len(self.data) in (STATUS_TELEMETRY.size, STATUS_TELEMETRY.size + CLOUD_TELEMETRY.size):
+            if len(self.data) in (STATUS_TELEMETRY.size, STATUS_TELEMETRY.size + CLOUD_TELEMETRY.size, STATUS_TELEMETRY.size + CLOUD_TELEMETRY.size + ROBOT_DOMAIN.size):
                 segments, link = STATUS_TELEMETRY.unpack(self.data[:STATUS_TELEMETRY.size])
                 if len(self.data) > STATUS_TELEMETRY.size:
-                    flags, reach, phase, percent, name, revision = CLOUD_TELEMETRY.unpack(self.data[STATUS_TELEMETRY.size:])
+                    flags, reach, phase, percent, name, revision = CLOUD_TELEMETRY.unpack(self.data[STATUS_TELEMETRY.size:STATUS_TELEMETRY.size+CLOUD_TELEMETRY.size])
                     if flags <= 7 and reach < len(CLOUD_REACH) and phase < len(CLOUD_PHASES) and percent <= 100:
                         cloud = {'configured': bool(flags & 1), 'mode': 'automatic' if flags & 2 else 'manual',
                                  'reachable': CLOUD_REACH[reach], 'state': CLOUD_PHASES[phase],
                                  'progress': percent, 'recording_token': name.hex(), 'revision': revision,
                                  'queued': int(bool(flags & 4))}
+                if len(self.data) == STATUS_TELEMETRY.size + CLOUD_TELEMETRY.size + ROBOT_DOMAIN.size:
+                    domain, pending, revision, flags = ROBOT_DOMAIN.unpack(self.data[-ROBOT_DOMAIN.size:])
+                    if domain <= 232 and (pending <= 232 or pending == 255) and flags <= 15:
+                        robot_domain = {'domain': domain, 'pending': None if pending == 255 else pending,
+                                        'revision': revision, 'connected': bool(flags & 1),
+                                        'registered': bool(flags & 2), 'error': 'Domain change failed; refresh status' if flags & 4 else None,
+                                        'bridge_running': bool(flags & 8)}
                 if link & ~7 or link & 3 == 3:
                     link = 0
             elif len(self.data) == STATUS_SEGMENTS.size:
@@ -276,7 +290,7 @@ class Response:
             "total_bytes": None if self.total_bytes == UNKNOWN64 else self.total_bytes,
             "temperature_c": None if self.temperature_tenths == 32767 else self.temperature_tenths / 10,
             "topic_count": self.topic_count, "storage_warning": bool(self.flags & 1),
-            "cloud": cloud,
+            "cloud": cloud, "robot_domain": robot_domain,
             "segment_count": None if segments == 65535 else segments,
             "robot_link": {0: 'unknown', 1: 'connected', 2: 'lost'}.get(link & 3, 'unknown'),
             "robot_link_interrupted": bool(link & 4),

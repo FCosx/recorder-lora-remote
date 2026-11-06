@@ -16,7 +16,7 @@ from urllib.request import ProxyHandler, Request as HTTPRequest, build_opener
 
 from .common import SerialLink
 from .protocol import (
-    CLOUD_TELEMETRY, CLOUD_PHASES, CLOUD_REACH, CATALOG_REQUEST, CATALOG_RESPONSE, COMMAND_LIFETIME, MAX_PAYLOAD, RESPONSE,
+    ROBOT_DOMAIN, DOMAIN_COMMAND, DOMAIN_STATUS_REQUEST, CLOUD_TELEMETRY, CLOUD_PHASES, CLOUD_REACH, CATALOG_REQUEST, CATALOG_RESPONSE, COMMAND_LIFETIME, MAX_PAYLOAD, RESPONSE,
     RECORDING_NAME, SPLIT_LIMITS, STATUS_TELEMETRY, SYNC_RESPONSE, UNKNOWN32, UNKNOWN64, ZERO, Op, Request, Response, Result, State, recording_token, split_limits,
 )
 
@@ -62,12 +62,17 @@ class RecorderAPI:
     def topics(self):
         return self.request("/api/topics", timeout=20)["topics"]
 
-    def start(self, topics, size=0, duration=0):
+    def start(self, topics, size=0, duration=0, robot_revision=None):
         size, duration = split_limits(size, duration)
         body = {"topics": topics}
+        if robot_revision is not None:
+            body["robot_revision"] = robot_revision
         if size or duration:
             body.update(max_bag_size_mib=size, max_bag_duration_seconds=duration)
         return self.request("/api/start", body, timeout=5)
+
+    def robot_domain(self, domain, revision):
+        return self.request("/api/robot-domain", {"domain": domain, "revision": revision}, timeout=5)
 
     def stop(self, name):
         return self.request("/api/stop", {"expected_name": name, "wait": False}, timeout=5)
@@ -240,17 +245,24 @@ class Agent:
         return Result.OK, topics
 
     def topics_response(self, request):
+        current = self.api.status().get('robot_domain') or {}
+        if self.catalog and (self.catalog.get('robot_revision') != current.get('revision') or current.get('pending') is not None):
+            self.catalog = None
+            self.catalog_request_id = None
         if len(request.data) != CATALOG_REQUEST.size:
             return self.snapshot(request, Result.INVALID_TOPICS)
         revision, offset = CATALOG_REQUEST.unpack(request.data)
         if revision == ZERO and offset == 0:
             if self.catalog_request_id != request.number or self.catalog is None:
+                robot = self.api.status().get("robot_domain") or {}
                 result, topics = self.discover()
+                if robot.get("revision") != (self.api.status().get("robot_domain") or {}).get("revision") or robot.get("pending") is not None:
+                    return self.snapshot(request, Result.CATALOG_CHANGED)
                 if result != Result.OK:
                     return self.snapshot(request, result)
                 packed = zlib.compress(json.dumps(topics, separators=(",", ":")).encode())
                 self.catalog = {"revision": secrets.token_bytes(8), "topics": topics,
-                                "packed": packed, "created": self.clock()}
+                                "packed": packed, "created": self.clock(), "robot_revision": robot.get("revision")}
                 self.catalog_request_id = request.number
         elif self.catalog is None or revision != self.catalog["revision"]:
             return self.snapshot(request, Result.CATALOG_CHANGED)
@@ -275,6 +287,8 @@ class Agent:
                 return Result.BUSY
             if status["state"] != "idle":
                 return Result.ALREADY_RECORDING
+            if status.get("robot_domain", {}).get("pending") is not None:
+                return Result.BUSY
             if not status.get("can_start", False):
                 return Result.LOW_STORAGE
             if request.recording != recording_token(status.get("name")):
@@ -284,7 +298,8 @@ class Agent:
                     return Result.INVALID_SPLIT
                 if (self.catalog is None
                         or request.data[:8] != self.catalog["revision"]
-                        or self.clock() - self.catalog["created"] > 3600):
+                        or self.clock() - self.catalog["created"] > 3600
+                        or self.catalog.get("robot_revision") != (status.get("robot_domain") or {}).get("revision")):
                     return Result.CATALOG_CHANGED
                 if len(request.data) > 21:
                     try:
@@ -304,10 +319,23 @@ class Agent:
             # Topic discovery can take seconds; never execute a now-expired Start.
             if not self.fresh(request):
                 return Result.EXPIRED
-            if size or duration:
+            robot_revision = (status.get("robot_domain") or {}).get("revision")
+            if robot_revision is not None:
+                self.api.start(topics, size, duration, robot_revision=robot_revision)
+            elif size or duration:
                 self.api.start(topics, size, duration)
             else:
                 self.api.start(topics)
+        elif request.op == Op.ROBOT_DOMAIN:
+            if status['state'] != 'idle':
+                return Result.BUSY
+            if len(request.data) != DOMAIN_COMMAND.size:
+                return Result.DOMAIN_UNAVAILABLE
+            domain, revision = DOMAIN_COMMAND.unpack(request.data)
+            try:
+                self.api.robot_domain(domain, revision)
+            except APIRejected:
+                return Result.DOMAIN_UNAVAILABLE
         elif request.op == Op.STOP:
             if status["state"] == "idle":
                 return Result.ALREADY_IDLE
@@ -376,6 +404,12 @@ class Agent:
                             CLOUD_REACH.index(cloud.get('reachable', 'unknown')),
                             CLOUD_PHASES.index(cloud.get('state', 'idle')),
                             min(100, max(0, int(cloud.get('progress', 0)))), recording_token(cloud.get('name')), cloud.get('revision', 0))
+        if request.op == Op.STATUS and request.data == DOMAIN_STATUS_REQUEST and isinstance(status.get('robot_domain'), dict):
+            domain = status['robot_domain']
+            if not isinstance(cloud, dict):
+                segment_data += CLOUD_TELEMETRY.pack(0, 3, 0, 0, ZERO, 0)
+            flags_domain = int(bool(domain.get('connected'))) | (int(bool(domain.get('registered'))) << 1) | (int(bool(domain.get('error'))) << 2) | (int(bool(domain.get('bridge_running'))) << 3)
+            segment_data += ROBOT_DOMAIN.pack(domain.get('domain', 0), domain['pending'] if domain.get('pending') is not None else 255, domain.get('revision', 0), flags_domain)
         return Response(
             request.op, request.number, result, state, flags,
             unsigned(None if elapsed is None else elapsed * 1000, UNKNOWN32),

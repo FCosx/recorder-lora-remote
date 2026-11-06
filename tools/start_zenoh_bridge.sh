@@ -21,8 +21,9 @@ config=json.load(open(sys.argv[1]))
 print(int(config.get('plugins',{}).get('ros2dds',{}).get('domain',0)))
 PYDOMAIN
 )
-# Both processes inherit the robot ROS/custom-message environment. The helper
+# Both processes use the selected source domain and standard ROS environment. The helper
 # keeps control routes warm but creates sensor readers only for a requested scan.
+export ROS_DOMAIN_ID="$source_domain"
 bridge_pid= helper_pid=
 cleanup() {
   trap - EXIT INT TERM HUP

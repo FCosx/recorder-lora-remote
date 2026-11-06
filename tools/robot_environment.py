@@ -10,7 +10,7 @@ import re
 import time
 
 SUPPORTED = ('humble', 'jazzy')
-ROS_KEYS = {'ROS_DISTRO', 'ROS_DOMAIN_ID', 'COLCON_PREFIX_PATH', 'AMENT_PREFIX_PATH'}
+ROS_KEYS = {'ROS_DISTRO', 'ROS_DOMAIN_ID'}
 
 
 def domain_number(value):
@@ -81,7 +81,7 @@ def read_saved(root):
         config = root / 'zenoh/robot.json5'
         if config.exists():
             configured = domain_number(json.loads(config.read_text())['plugins']['ros2dds']['domain'])
-            if configured != value['domain']:
+            if value.get('version', 1) < 2 and configured != value['domain']:
                 raise ValueError('Saved bridge domain and service settings disagree')
         return value
     except (OSError, KeyError, TypeError, ValueError) as error:
@@ -101,30 +101,6 @@ def choose_value(label, values, choose):
     if selected not in values:
         raise ValueError(f'Invalid {label} selection')
     return selected
-
-
-def workspace_scripts(environment, distro, ros_root=Path('/opt/ros')):
-    if environment.get('ROS_DISTRO') != distro:
-        return []
-    result = []
-    for key in ('COLCON_PREFIX_PATH', 'AMENT_PREFIX_PATH'):
-        for prefix in reversed(environment.get(key, '').split(os.pathsep)):
-            if not prefix:
-                continue
-            location = Path(prefix).expanduser().resolve()
-            if location.is_relative_to(ros_root.resolve()):
-                continue
-            # A merged workspace has setup.bash at its prefix. Isolated package
-            # prefixes live directly under the workspace's install directory.
-            for candidate in (location, location.parent):
-                setup = candidate / 'setup.bash'
-                if setup.is_file() and (candidate == location or
-                        (candidate / '.colcon_install_layout').is_file()):
-                    name = str(setup.resolve())
-                    if name not in result:
-                        result.append(name)
-                    break
-    return result
 
 
 def detect(root, distro=None, domain=None, setups=(), no_workspaces=False,
@@ -147,17 +123,19 @@ def detect(root, distro=None, domain=None, setups=(), no_workspaces=False,
         domains = [row['domain'] for row in domain_evidence]
         if (environment.get('ROS_DOMAIN_ID', '') and
                 (not preferred or environment.get('ROS_DISTRO') in (None, '', preferred))):
-            domains.append(domain_number(environment['ROS_DOMAIN_ID']))
-        domain = choose_value('ROS domain', domains, choose)
-        domain_source = 'running nodes/current environment' if domain is not None else 'default'
-        domain = 0 if domain is None else domain
+            try:
+                domains.append(domain_number(environment['ROS_DOMAIN_ID']))
+            except ValueError:
+                pass  # An unreadable/invalid automatic hint uses the UI's domain-0 fallback.
+        domain = domains[0] if len(set(domains)) == 1 else 0
+        domain_source = 'running nodes/current environment' if len(set(domains)) == 1 else 'default'
 
     if distro:
         distro_source = 'explicit option'
     elif saved.get('ros_distro'):
         distro, distro_source = saved['ros_distro'], 'existing settings'
     else:
-        candidates = [row['distro'] for row in evidence if row['domain'] == domain]
+        candidates = [row['distro'] for row in evidence if row['domain'] == domain] or [row['distro'] for row in evidence]
         if environment.get('ROS_DISTRO') in installed:
             candidates.append(environment['ROS_DISTRO'])
         distro = choose_value('ROS version', candidates or installed, choose)
@@ -167,38 +145,11 @@ def detect(root, distro=None, domain=None, setups=(), no_workspaces=False,
 
     base = str((ros_root / distro / 'setup.bash').resolve())
     files = [base]
-    same_saved = saved.get('ros_distro') == distro
-    saved_workspaces = same_saved and 'setup_files' in saved
-    # Preserve prior overlays on repeat setup, including from an unsourced shell.
-    if not no_workspaces:
-        for value in saved.get('setup_files', []) if same_saved else []:
-            if value != base:
-                path = Path(value).expanduser().resolve()
-                if not path.is_file():
-                    raise ValueError(f'Saved workspace is missing: {path}; restore it or use --no-workspaces')
-                if str(path) not in files:
-                    files.append(str(path))
-        detected = [] if saved_workspaces else workspace_scripts(environment, distro, ros_root)
-        # Different nodes may carry different overlay sets. Do not merge those
-        # arbitrarily: an already-sourced shell or existing settings take priority.
-        if not detected and len(files) == 1 and not saved_workspaces:
-            candidates = {tuple(workspace_scripts(row['environment'], distro, ros_root))
-                          for row in evidence if row['domain'] == domain and row['distro'] == distro}
-            candidates.discard(())
-            if len(candidates) > 1 and not setups:
-                raise ValueError('Running nodes use different ROS workspaces; source the intended workspace or specify --setup')
-            if len(candidates) == 1 and not setups:
-                detected = list(next(iter(candidates)))
-        for name in detected:
-            if name not in files:
-                files.append(name)
-    for value in setups:
-        path = Path(value).expanduser().resolve()
-        if not path.is_file():
-            raise ValueError(f'ROS setup script not found: {path}')
-        if str(path) not in files:
-            files.append(str(path))
+    if setups:
+        raise ValueError('Workspace loading is no longer used; only standard ROS message types are supported')
     notes = []
+    if domain_source == 'default':
+        notes.append('No unique robot ROS domain detected; using 0. Change Robot ROS domain in the recorder UI if needed.')
     observed = {row['domain'] for row in evidence}
     if domain_source == 'existing settings' and observed and domain not in observed:
         notes.append('Existing domain kept; running nodes were seen in ' + ', '.join(map(str, sorted(observed))) +

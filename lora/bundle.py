@@ -20,10 +20,14 @@ def build_bundle(root, config_path, destination, encrypted_pairing=None):
     for name in ("lora/remote.html", "tools/lora_recorder.py", "tools/lora_offline_bootstrap.py",
                  "lora/licenses/pyserial-LICENSE.txt", "tools/desktop_shortcuts.py"):
         files[name] = (root / name).read_bytes()
-    for name in ('lora-remote.md','lora-remote.en.md','lora-remote.zh-CN.md'):
+    for name in ('lora-remote.md','lora-remote.en.md','lora-remote.zh-CN.md',
+                 'user-manual.md','user-manual.en.md','user-manual.zh-CN.md'):
         path=root/'docs'/name
         if path.is_file():
-            files['docs/'+name]=path.read_bytes()
+            text=path.read_text()
+            text='\n'.join('树莓派登录密码由维护者提供。等待关机完成后再移除电源。'
+                           if line.startswith('本地维护副本：') else line for line in text.split('\n'))
+            files['docs/'+name]=text.encode()
     files["__main__.py"] = (root / "tools/lora_offline_bootstrap.py").read_bytes()
     serial_root = Path(serial.__file__).resolve().parent
     for path in serial_root.rglob("*.py"):

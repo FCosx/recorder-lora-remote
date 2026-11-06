@@ -51,6 +51,19 @@ class InstallerTests(unittest.TestCase):
         encrypted.write_bytes(encrypt_pairing(json.loads(self.source.read_text()), 'test-only-passphrase'))
         return encrypted, build_bundle(ROOT, None, self.root / 'encrypted.pyz', encrypted)
 
+    def test_installer_includes_bilingual_manuals_without_private_pi_login(self):
+        with zipfile.ZipFile(self.bundle) as archive:
+            names=archive.namelist()
+            self.assertIn('docs/user-manual.md',names)
+            self.assertTrue('docs/user-manual.en.md' in names or 'docs/user-manual.zh-CN.md' in names)
+            for name in names:
+                if name.startswith('docs/'):
+                    self.assertNotIn('本地维护副本：',archive.read(name).decode())
+                    self.assertNotIn('当前密码为',archive.read(name).decode())
+        result=self.install()
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        self.assertTrue((self.target/'docs/user-manual.md').is_file())
+
     def test_encrypted_first_install_then_update_without_passcode_or_openssl(self):
         encrypted, bundle = self.encrypted_bundle()
         self.assertNotIn(self.key.encode(), encrypted.read_bytes())

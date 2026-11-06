@@ -92,7 +92,8 @@ def install_path(name):
     if path.is_absolute() or ".." in path.parts or "\\" in name:
         return False
     return (name in ("tools/lora_recorder.py", "tools/lora_offline_bootstrap.py", "tools/desktop_shortcuts.py",
-                    "docs/lora-remote.md", "docs/lora-remote.en.md", "docs/lora-remote.zh-CN.md")
+                    "docs/lora-remote.md", "docs/lora-remote.en.md", "docs/lora-remote.zh-CN.md",
+                    "docs/user-manual.md", "docs/user-manual.en.md", "docs/user-manual.zh-CN.md")
             or (name.startswith("lora/") and path.suffix in (".py", ".html", ".service", ".txt"))
             or (name.startswith("vendor/serial/") and path.suffix == ".py")
             or name == "vendor/pyserial-LICENSE.txt")

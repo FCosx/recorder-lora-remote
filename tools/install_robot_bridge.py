@@ -26,6 +26,7 @@ ASSETS = {
     'build_zenoh_bridge.sh': 'tools/build_zenoh_bridge.sh',
     'start_zenoh_bridge.sh': 'tools/start_zenoh_bridge.sh',
     'robot_bandwidth.py': 'tools/robot_bandwidth.py',
+    'robot_control_client.py': 'tools/robot_control_client.py',
     'robot_bridge_service.py': 'tools/robot_bridge_service.py',
     'route-listener-lifetime.patch': 'zenoh/patches/1.10.1-route-listener-lifetime.patch',
     'install_robot_bridge.py': 'tools/install_robot_bridge.py',
@@ -87,7 +88,7 @@ def download(pi_url, name, destination, limit=1024 * 1024):
 def choose(label, values):
     print(f'{label} choices: ' + ', '.join(map(str, values)), flush=True)
     if not sys.stdin.isatty():
-        raise ValueError('Selection is ambiguous; use --domain, --ros-distro or --setup explicitly')
+        raise ValueError('Selection is ambiguous; use --domain, --ros-distro explicitly')
     answer = input(f'{label} to use: ').strip()
     for value in values:
         if answer == str(value):
@@ -194,8 +195,8 @@ def main(argv=None):
     parser.add_argument('--install-dir', type=Path)
     parser.add_argument('--ros-distro', choices=robot_environment.SUPPORTED)
     parser.add_argument('--domain', type=robot_environment.domain_number)
-    parser.add_argument('--setup', action='append', default=[], help='Additional workspace setup.bash')
-    parser.add_argument('--no-workspaces', action='store_true', help='Explicitly clear saved/auto workspace overlays')
+    parser.add_argument('--setup', action='append', default=[], help=argparse.SUPPRESS)
+    parser.add_argument('--no-workspaces', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--configure-only', action='store_true')
     parser.add_argument('--skip-dependencies', action='store_true')
     parser.add_argument('--build-from-source', action='store_true', help='Explicit fallback for unsupported packages')

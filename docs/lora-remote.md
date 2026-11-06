@@ -47,6 +47,12 @@ By default, status requests wait one second after each reply, plus radio transmi
 
 Before starting, optionally set MiB and/or seconds under `Split MCAP files`. Leave blank to disable splitting. If both limits are set, the first reached starts a new segment; all segments belong to one recording. CPU temperature appears at the upper right.
 
+## Robot ROS domain
+
+**Available topics → Robot ROS domain** is shared with the local Pi page. While idle, enter the publishers' domain (**0–232**), click **Apply domain**, and wait for **Current: …** to confirm the change. The topic list refreshes afterward. The robot saves the value across reboots; unknown initial detection uses **0**.
+
+This selects the source bridge's listening domain. It does not change publishers or the Pi's fixed domain **1**. Recording and domain changes cannot run together. Even if the selected domain has no topics, you can correct it over LoRa without SSH or a Pi IP on this laptop. The robot-to-Pi Ethernet link and updated managed source bridge must be running. If the control is unavailable, check that bridge using the recorder manual.
+
 ## Bandwidth preview
 
 Opening the page or clicking **Refresh topics** requests one quick robot-side bandwidth snapshot. Topics are sampled together for about one second, targeting a result within about 1–2 seconds on a healthy link. **—** means insufficient samples or a timeout, not zero. Per-topic rates and the selected total stay visible until the next refresh. LoRa delivery takes additional time. Temporary subscribers count bytes in robot RAM only, save no messages and send only metadata/results to the Pi. Starting recording from either UI waits for the robot to confirm that its temporary subscribers have closed; missing confirmation prevents recording from starting. These short receive-rate estimates do not guarantee complete delivery or sustainable storage throughput.

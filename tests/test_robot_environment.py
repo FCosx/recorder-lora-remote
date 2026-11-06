@@ -33,31 +33,26 @@ class EnvironmentTests(unittest.TestCase):
     def node(self, domain=42, distro='jazzy', environment=None):
         return {'domain': domain, 'distro': distro, 'environment': environment or {'ROS_DISTRO': distro}}
 
-    def test_current_sourced_ros_domain_and_workspace_are_used(self):
+    def test_ros_domain_detected_without_loading_sourced_workspace(self):
         workspace = self.base / 'custom robot/install'
         workspace.mkdir(parents=True)
         (workspace/'setup.bash').write_text('# custom messages\n')
         value = self.resolve(environment={'ROS_DISTRO': 'jazzy', 'ROS_DOMAIN_ID': '42',
                                          'COLCON_PREFIX_PATH': str(workspace)})
         self.assertEqual((value['ros_distro'], value['domain']), ('jazzy', 42))
-        self.assertEqual(value['setup_files'], [str(self.ros/'jazzy/setup.bash'), str(workspace/'setup.bash')])
+        self.assertEqual(value['setup_files'], [str(self.ros/'jazzy/setup.bash')])
 
     def test_unsourced_shell_can_detect_one_running_robot_domain(self):
         value = self.resolve(evidence=[self.node(89, 'humble')])
         self.assertEqual((value['ros_distro'], value['domain']), ('humble', 89))
 
-    def test_conflicting_shell_and_running_nodes_require_choice(self):
-        with self.assertRaisesRegex(ValueError, 'Multiple ROS domain'):
-            self.resolve(environment={'ROS_DOMAIN_ID': '0'}, evidence=[self.node(42)])
-        value = self.resolve(environment={'ROS_DOMAIN_ID': '0'}, evidence=[self.node(42)],
-                             choose=lambda label, choices: 42)
-        self.assertEqual(value['domain'], 42)
+    def test_conflicting_domain_evidence_defaults_to_zero(self):
+        value = self.resolve(environment={'ROS_DOMAIN_ID': '0'}, evidence=[self.node(42)])
+        self.assertEqual((value['ros_distro'], value['domain']), ('jazzy', 0))
 
-    def test_multiple_running_domains_are_not_silently_merged(self):
-        with self.assertRaisesRegex(ValueError, 'Multiple ROS domain'):
-            self.resolve(evidence=[self.node(7), self.node(9)])
-        value = self.resolve(domain=9, evidence=[self.node(7), self.node(9)])
-        self.assertEqual(value['domain'], 9)
+    def test_multiple_running_domains_default_to_zero_but_allow_explicit_choice(self):
+        self.assertEqual(self.resolve(evidence=[self.node(7), self.node(9)])['domain'], 0)
+        self.assertEqual(self.resolve(domain=9, evidence=[self.node(7), self.node(9)])['domain'], 9)
 
     def test_two_installed_ros_versions_without_evidence_require_choice(self):
         with self.assertRaisesRegex(ValueError, 'Multiple ROS version'):
@@ -69,19 +64,18 @@ class EnvironmentTests(unittest.TestCase):
                            evidence=[self.node(42,'humble'),self.node(9,'jazzy')])
         self.assertEqual(value['domain'],9)
 
-    def test_repeat_setup_preserves_saved_nonzero_domain_and_overlays(self):
+    def test_repeat_setup_preserves_nonzero_domain_and_removes_saved_overlays(self):
         overlay=self.base/'saved install';overlay.mkdir();(overlay/'setup.bash').write_text('# saved\n')
         files=[str(self.ros/'jazzy/setup.bash'),str(overlay/'setup.bash')]
         self.saved(files=files)
         value=self.resolve(environment={'ROS_DOMAIN_ID':'0'})
         self.assertEqual(value['domain'],37)
-        self.assertEqual(value['setup_files'],files)
+        self.assertEqual(value['setup_files'],[files[0]])
         self.assertEqual(self.resolve(domain=12)['domain'],12)
 
-    def test_broken_saved_workspace_requires_explicit_clearing(self):
+    def test_missing_saved_workspace_does_not_block_standard_messages(self):
         self.saved(files=[str(self.ros/'jazzy/setup.bash'),str(self.base/'missing/setup.bash')])
-        with self.assertRaisesRegex(ValueError,'Saved workspace is missing'):
-            self.resolve()
+        self.assertEqual(self.resolve()['setup_files'],[str(self.ros/'jazzy/setup.bash')])
         self.assertEqual(self.resolve(no_workspaces=True)['setup_files'],[str(self.ros/'jazzy/setup.bash')])
 
     def test_repeat_setup_does_not_add_an_unrelated_sourced_workspace(self):
@@ -91,31 +85,22 @@ class EnvironmentTests(unittest.TestCase):
         environment={'ROS_DISTRO':'jazzy','COLCON_PREFIX_PATH':str(overlay)}
         value=self.resolve(environment=environment)
         self.assertEqual(value['setup_files'],[str(self.ros/'jazzy/setup.bash')])
-        value=self.resolve(environment=environment,setups=[str(overlay/'setup.bash')])
-        self.assertEqual(value['setup_files'][-1],str(overlay/'setup.bash'))
+        with self.assertRaisesRegex(ValueError,'Workspace loading'):
+            self.resolve(environment=environment,setups=[str(overlay/'setup.bash')])
 
-    def test_isolated_colcon_packages_resolve_to_the_workspace_once(self):
+    def test_isolated_colcon_packages_are_not_loaded(self):
         install=self.base/'ws/install';(install/'messages').mkdir(parents=True)
         (install/'setup.bash').write_text('# workspace\n');(install/'.colcon_install_layout').write_text('isolated')
         value=self.resolve(environment={'ROS_DISTRO':'jazzy','AMENT_PREFIX_PATH':
             str(install/'messages')+':'+str(self.ros/'jazzy')})
-        self.assertEqual(value['setup_files'],[str(self.ros/'jazzy/setup.bash'),str(install/'setup.bash')])
-
-    def test_workspace_chains_are_underlay_first_and_wrong_distro_is_ignored(self):
-        under,over=self.base/'under',self.base/'over'
-        for folder in (under,over):folder.mkdir();(folder/'setup.bash').write_text('# setup\n')
-        environment={'ROS_DISTRO':'jazzy','COLCON_PREFIX_PATH':str(over)+':'+str(under)}
-        self.assertEqual(ros.workspace_scripts(environment,'jazzy',self.ros),
-                         [str(under/'setup.bash'),str(over/'setup.bash')])
-        self.assertEqual(ros.workspace_scripts(environment,'humble',self.ros),[])
+        self.assertEqual(value['setup_files'],[str(self.ros/'jazzy/setup.bash')])
 
     def test_ambiguous_node_workspaces_do_not_get_combined(self):
         nodes=[]
         for name in ('one','two'):
             path=self.base/name;path.mkdir();(path/'setup.bash').write_text('# setup\n')
             nodes.append(self.node(environment={'ROS_DISTRO':'jazzy','AMENT_PREFIX_PATH':str(path)}))
-        with self.assertRaisesRegex(ValueError,'different ROS workspaces'):
-            self.resolve(evidence=nodes)
+        self.assertEqual(self.resolve(evidence=nodes)['setup_files'],[str(self.ros/'jazzy/setup.bash')])
 
     def test_corrupt_or_disagreeing_saved_settings_are_preserved(self):
         self.saved()
@@ -140,10 +125,10 @@ class EnvironmentTests(unittest.TestCase):
         self.assertEqual(result[0]['domain'],74)
         self.assertNotIn('PASSWORD',result[0]['environment'])
 
-    def test_invalid_environment_domain_is_not_replaced_with_zero(self):
+    def test_invalid_automatic_domain_hint_defaults_to_zero(self):
         for value in ('abc','233','-1','2;exit','1.0'):
-            with self.subTest(value=value),self.assertRaisesRegex(ValueError,'ROS domain'):
-                self.resolve(distro='jazzy',environment={'ROS_DOMAIN_ID':value})
+            with self.subTest(value=value):
+                self.assertEqual(self.resolve(distro='jazzy',environment={'ROS_DOMAIN_ID':value})['domain'],0)
 
 
 if __name__=='__main__':unittest.main()

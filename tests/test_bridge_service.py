@@ -59,28 +59,24 @@ class BridgeServiceTests(unittest.TestCase):
         self.assertNotIn('network-online.target', text)
         self.assertIn('ExecStart=:', text)
 
-    def test_user_ros_overlay_is_preserved_for_the_correct_distribution(self):
+    def test_only_base_ros_is_loaded_for_both_distributions(self):
         overlay = self.root / 'workspace/install'
         overlay.mkdir(parents=True)
         (overlay / 'setup.bash').write_text('# workspace\n')
         env = {'ROS_DISTRO': 'jazzy', 'COLCON_PREFIX_PATH': str(overlay)}
-        self.assertEqual(service.setup_files('jazzy', env), ['/opt/ros/jazzy/setup.bash', str(overlay/'setup.bash')])
+        self.assertEqual(service.setup_files('jazzy', env), ['/opt/ros/jazzy/setup.bash'])
         self.assertEqual(service.setup_files('humble', env), ['/opt/ros/humble/setup.bash'])
 
-    def test_service_waits_until_wired_ready_and_then_executes_the_existing_launcher(self):
-        settings = self.root / 'settings.json'
-        settings.write_text(json.dumps({'root': str(self.root), 'config': str(self.root/'robot.json5'),
-            'pi_url': 'http://192.168.1.182:8080', 'ros_distro': 'jazzy', 'domain': 42,
-            'setup_files': ['/opt/ros/jazzy/setup.bash']}))
-        with patch.object(service, 'wired_route', side_effect=[None, None, 'eth-test']), \
-                patch.object(service.time, 'sleep') as sleep, patch.object(service.os, 'execve') as execute:
-            service.run(settings)
-        self.assertEqual(sleep.call_count, 2)
-        executable, arguments, environment = execute.call_args.args
-        self.assertEqual(executable, '/bin/bash')
-        self.assertIn('start_zenoh_bridge.sh', arguments[-1])
-        self.assertEqual(environment['ROS_DOMAIN_ID'], '42')
-        self.assertNotIn('ROS_LOCALHOST_ONLY', environment)
+    def test_service_delegates_lifecycle_without_loading_overlays(self):
+        with patch('tools.robot_control_client.run_manager') as manage, patch.object(service.subprocess, 'Popen') as spawn:
+            service.run(self.root/'settings.json')
+            launch = manage.call_args.args[1]
+            launch({'root': str(self.root), 'config': str(self.root/'robot.json5'), 'domain': 42,
+                    'ros_distro': 'jazzy', 'setup_files': ['/bad/workspace/setup.bash']})
+            self.assertIn('/opt/ros/jazzy/setup.bash', spawn.call_args.args[0][-1])
+            self.assertNotIn('/bad/workspace', spawn.call_args.args[0][-1])
+            self.assertTrue(spawn.call_args.kwargs['start_new_session'])
+            self.assertEqual(spawn.call_args.kwargs['env']['ROS_DOMAIN_ID'], '42')
 
     def test_only_exact_owned_launchers_are_identified(self):
         proc = self.root / 'proc'

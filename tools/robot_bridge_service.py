@@ -25,22 +25,9 @@ def unit_quote(value):
 
 
 def setup_files(distro, environment=os.environ, extra=()):
-    base = Path('/opt/ros') / distro / 'setup.bash'
-    result = [str(base)]
-    if environment.get('ROS_DISTRO') == distro:
-        for prefix in reversed(environment.get('COLCON_PREFIX_PATH', '').split(':')):
-            if not prefix:
-                continue
-            path = Path(prefix) / 'setup.bash'
-            if path.is_file() and str(path) not in result:
-                result.append(str(path.resolve()))
-    for value in extra:
-        path = Path(value).expanduser().resolve()
-        if not path.is_file():
-            raise ValueError(f'ROS setup script not found: {path}')
-        if str(path) not in result:
-            result.append(str(path))
-    return result
+    if extra:
+        raise ValueError('Workspace loading is no longer supported; use standard ROS message types')
+    return [str(Path('/opt/ros') / distro / 'setup.bash')]
 
 
 def service_text(root, settings, python=sys.executable):
@@ -100,21 +87,20 @@ def launch_command(root, config, setups, domain=None, distro=None):
 
 
 def run(settings):
-    value = json.loads(settings.read_text())
-    root, config = Path(value['root']), Path(value['config'])
-    host = urlsplit(value['pi_url']).hostname
-    print(f'Waiting for the recorder Ethernet network ({host})…', flush=True)
-    # User services cannot order themselves after the system manager's
-    # network-online target. Wait for the actual wired route instead of a sleep.
-    while not (interface := wired_route(host)):
-        time.sleep(2)
-    print(f'Starting recorder bridge on {interface}.', flush=True)
-    environment = dict(os.environ, ROS_DISTRO=value['ros_distro'],
-                       ROS_DOMAIN_ID=str(value['domain']), RMW_IMPLEMENTATION='rmw_cyclonedds_cpp',
-                       ROS_AUTOMATIC_DISCOVERY_RANGE='SUBNET')
-    environment.pop('ROS_LOCALHOST_ONLY', None)
-    os.execve('/bin/bash', ['bash', '-c', launch_command(root, config, value['setup_files'],
-              value['domain'], value['ros_distro'])], environment)
+    if __package__:
+        from .robot_control_client import run_manager
+    else:
+        from robot_control_client import run_manager
+    def launch(value):
+        root, config = Path(value['root']), Path(value['config'])
+        environment = dict(os.environ, ROS_DISTRO=value['ros_distro'],
+                           ROS_DOMAIN_ID=str(value['domain']), RMW_IMPLEMENTATION='rmw_cyclonedds_cpp',
+                           ROS_AUTOMATIC_DISCOVERY_RANGE='SUBNET')
+        environment.pop('ROS_LOCALHOST_ONLY', None)
+        return subprocess.Popen(['/bin/bash', '-c', launch_command(root, config,
+                    setup_files(value['ros_distro']), value['domain'], value['ros_distro'])],
+                    env=environment, start_new_session=True)
+    run_manager(settings, launch, wired_route)
 
 
 def manual_launchers(root, proc_root=Path('/proc')):
@@ -194,14 +180,19 @@ def install(args):
         base = str(Path('/opt/ros') / args.ros_distro / 'setup.bash')
         if not isinstance(plan.get('setup_files'), list) or not plan['setup_files'] or plan['setup_files'][0] != base:
             raise ValueError('Invalid resolved ROS workspace list')
-        setups = setup_files(args.ros_distro, environment={}, extra=plan['setup_files'][1:])
+        setups = setup_files(args.ros_distro, environment={})
     else:
         setups = setup_files(args.ros_distro, extra=args.setup)
-    values = {'version': 1, 'root': str(root), 'config': str(config), 'ros_distro': args.ros_distro,
+    values = {'version': 2, 'root': str(root), 'config': str(config), 'ros_distro': args.ros_distro,
               'domain': domain, 'pi_url': args.pi_url.rstrip('/'),
               'setup_files': setups}
     settings = root / 'zenoh/robot-service.json'
-    settings.write_text(json.dumps(values, indent=2) + '\n')
+    if __package__:
+        from .robot_control_client import register, atomic_json
+    else:
+        from robot_control_client import register, atomic_json
+    register(root, args.pi_url, domain)
+    atomic_json(settings, values)
     unit.parent.mkdir(parents=True, exist_ok=True)
     unit.write_text(service_text(root, settings))
     linger = subprocess.run(['loginctl', '--no-ask-password', 'enable-linger', getpass.getuser()],

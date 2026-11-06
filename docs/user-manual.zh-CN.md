@@ -18,7 +18,7 @@
 
 ### 2. 启动机器人的正常 ROS 程序
 
-先启动平时使用的传感器和 ROS 发布器，再用**同一个普通 ROS 用户**运行安装器。安装器会从当前环境或可读取的运行中 ROS 节点自动识别版本、域和工作空间。**正常安装不需要用户手动加载工作空间。** 保持机器人原有的 ROS 域；若无法识别所需环境，再按文末排查部分处理。
+先启动平时使用的传感器和 ROS 发布器，再用**同一个普通 ROS 用户**运行安装器。安装器会从当前环境或可读取的运行中 ROS 节点自动识别版本和初始域。只加载 ROS 基础环境，不需要加载机器人的工作空间。本记录器支持标准 ROS 消息类型；自定义类型的话题仍可出现在列表中，但不属于支持范围。 保持机器人原有的 ROS 域；若无法识别所需环境，再按文末排查部分处理。
 
 ### 3. 一次安装，并自动检查
 
@@ -31,7 +31,7 @@ curl -q --noproxy '*' -fL --retry 2 --connect-timeout 5 --max-time 60 \
 bash /tmp/install_robot_bridge.sh --pi-url http://192.168.1.182:8080
 ```
 
-按提示输入**机器人的 sudo 密码**。安装器自动选择经过校验的 x86_64 或 ARM64 桥，不需要用户编译。它会显示识别到的 ROS 版本、域和工作空间；有冲突时要求选择，无法获取域信息时会明确提示使用默认域 **0**。已有安装保留原来的配置和安装目录。
+按提示输入**机器人的 sudo 密码**。安装器自动选择经过校验的 x86_64 或 ARM64 桥，不需要用户编译。它会显示识别到的 ROS 版本和域。ROS 版本无法唯一确定时会要求选择；无法识别唯一的域时使用 **0**，之后可在任一 UI 中修改。已有安装保留原来的配置和安装目录。
 
 最后会集中检查以太网、树莓派录制服务、单个修复版桥、助手和话题发现。出现 **FAIL** 时，按提示处理后再录制。仅提示没有话题的 **WARN**，可能只是发布器尚未启动。等待 **Setup complete**；若安装中断，解决报错后，在记录器空闲时重跑同一段命令。
 
@@ -43,19 +43,25 @@ bash /tmp/install_robot_bridge.sh --pi-url http://192.168.1.182:8080
 
 **http://192.168.1.182:8080**
 
-**树莓派网页的 ROS 域保持 1**，机器人继续使用自己的域，由桥连接两端。请保留 `http://` 和 `:8080`。**http://robot-recorder.local:8080** 是可选地址，依赖本地名称解析，且可能解析到 Wi-Fi；配套设备优先用有线地址。仅打开网页的电脑可将该地址加入书签，不需要安装软件。
+**Available topics** 下的 **Robot ROS domain（机器人 ROS 域）** 显示源端桥当前监听的域。树莓派接收域固定为 **1**，无需在网页选择。请保留 `http://` 和 `:8080`。**http://robot-recorder.local:8080** 是可选地址，依赖本地名称解析，且可能解析到 Wi-Fi；配套设备优先用有线地址。仅打开网页的电脑可将该地址加入书签，不需要安装软件。
 
 ## 日常录制
 
 完成首次安装后，每次只需给套装和机器人通电、启动机器人的发布器，再从 Robot Recorder 入口或浏览器书签打开网页。日常本地录制不需要手动运行桥命令，也不依赖互联网。
 
-1. 等待 **Ready to record（可以录制）**，树莓派网页的 ROS 域保持 **1**。
+1. 等待 **Ready to record（可以录制）**。确认 **Robot ROS domain** 与机器人的发布器一致；识别正确时无需修改。
 2. 点击 **Refresh topics（刷新话题）**，勾选需要保存的话题。需要切包时，在 **Split MCAP files** 填写大小（MiB）、时长（秒）或两者；都留空则不切包，两项都填时先达到的条件触发切包。
 3. 点击 **Begin recording（开始录制）**。计时器在记录器订阅到第一个所选话题后启动。已完成 bag 的时长按第一条至最后一条录入消息计算，因此可能稍有差异。
 4. 点击 **Stop recording（停止录制）** 后等待收尾。缓存写入期间大小仍可能增加，请等到结束再断电。
 5. 在 **Recordings on the Pi** 中，点击 **View topics** 查看大小、时长、总消息数、各话题消息数和平均 Hz。切分文件仍属于同一录制。**Download** 将 TAR 副本保存到正在使用浏览器的电脑；**Delete** 会永久删除树莓派上的该录制。
 
 本地列表每页显示 10 个录制，话题列表使用内部滚动条。打开页面或点击 **Refresh topics** 时，机器人端进行一次约 1 秒的带宽采样。**—** 表示没有可用估算，不代表零；勾选后显示合计。临时订阅不保存传感器数据，开始录制前必须关闭。估算值不保证所有消息都能录入。
+
+### 修改机器人 ROS 域
+
+记录器空闲时，在 **Available topics** 下输入发布器的域（**0–232**），点击 **Apply domain（应用域）**。等待 **Current: …** 显示确认值，再从刷新的列表选择话题。本地网页与 LoRa 网页共用这一设置，机器人会保存它，重启后继续使用；重跑安装器也会保留已保存的域。
+
+此操作只改变桥监听哪个域，不会修改机器人的发布器，也不会改变树莓派固定的接收域 **1**。录制中不能改域，改域未完成时也不能开始录制。误选了没有话题的域，可直接在同一位置改回，无需 SSH。若显示 **Robot connection unavailable**，请按下文检查桥服务；旧版机器人端需要在空闲时重跑第 3 步安装命令以更新。
 
 异常录制会显示简短警告，详情在 **View topics**。**Data loss detected** 表示已报告或确认丢失；**Possible data loss** 表示网络饱和等风险；**Robot connection unavailable** 表示原先已连接的机器人链路中断。没有警告也不等于源数据绝对完整。
 
@@ -65,7 +71,7 @@ bash /tmp/install_robot_bridge.sh --pi-url http://192.168.1.182:8080
 ssh -tt recorder@192.168.1.182 'sudo poweroff'
 ```
 
-树莓派登录密码向维护者获取。等待关机完成后再移除电源。
+树莓派登录密码由维护者提供。等待关机完成后再移除电源。
 
 ## 可选增强：LoRa 控制
 
@@ -133,14 +139,16 @@ python3 -B ~/robot-recorder/tools/check_robot_setup.py
 
 ### ROS 环境没有正确识别
 
-先用普通账号启动所需 ROS 程序，或加载它们平时使用的工作空间，再重跑安装。root/容器中的程序，或在代码内部设置的域，可能无法自动读取。必要时仅指定需要覆盖的设置；下面数值和路径仅为示例，请替换为实际值：
+使用运行机器人 ROS 程序的普通账号安装。root/容器中的程序，或在代码内部设置的域，可能无法自动读取。无法识别唯一的域时默认使用 **0**，可在任一 UI 的 **Robot ROS domain → Apply domain** 中修改。
+
+若需指定 ROS 版本，在安装命令中填写实际安装的版本。以下示例明确选择 Humble 和源端域 5：
 
 ```bash
 bash /tmp/install_robot_bridge.sh --pi-url http://192.168.1.182:8080 \
-  --ros-distro humble --domain 5 --setup "$HOME/robot_ws/install/setup.bash"
+  --ros-distro humble --domain 5
 ```
 
-`--domain` 只设置机器人桥，不会修改机器人的发布器或树莓派网页。`--setup` 指向已有工作空间，不会编译工作空间。若没有兼容的预编译包，安装器会停止并保留已有桥，请联系维护者补充经过测试的包；普通用户无需自行编译。
+Jazzy 使用 `--ros-distro jazzy`。不需要提供工作空间路径。`--domain` 设置桥监听的域，不会修改发布器的域。没有兼容预编译包时，安装器会停止并保留现有桥，请联系维护者提供经过测试的包。
 
 ### 检查、重启或停止机器人桥
 
@@ -179,20 +187,22 @@ systemctl --user enable --now robot-recorder-source-bridge.service
 
 无需重新安装。重新运行安装器也会启用开机自启。
 
-### 树莓派地址或机器人 ROS 域改变
+### 树莓派地址改变
 
-先停止录制。在**机器人**输入新的有线地址和发布器使用的 ROS 域，重新配置并重启自动服务，无需重新编译：
+机器人 ROS 域改变时，只需在任一 UI 中使用 **Apply domain**。若树莓派有线 IP 改变，先停止录制，再在机器人终端更新保存的地址：
 
 ```bash
 read -rp '树莓派有线 IP: ' PI_IP
-read -rp '机器人发布器的 ROS 域: ' ROBOT_DOMAIN
-curl -q --noproxy '*' -fL --retry 2 --connect-timeout 5 --max-time 60   "http://$PI_IP:8080/setup/install_robot_bridge.sh" -o /tmp/install_robot_bridge.sh &&
-bash /tmp/install_robot_bridge.sh --pi-url "http://$PI_IP:8080"   --configure-only --domain "$ROBOT_DOMAIN"
+curl -q --noproxy '*' -fL --retry 2 --connect-timeout 5 --max-time 60 \
+  "http://$PI_IP:8080/setup/install_robot_bridge.sh" -o /tmp/install_robot_bridge.sh &&
+bash /tmp/install_robot_bridge.sh --pi-url "http://$PI_IP:8080" --configure-only
 ```
+
+此操作保留已保存的机器人域，重新配置并重启自动桥服务，无需编译。
 
 ### 找不到话题或消息数异常
 
-确认机器人正在发布、源端桥与发布器 ROS 域一致、树莓派网页使用域 **1**。按上文检查桥服务后，点击 **Refresh topics**。网络需允许机器人连接树莓派的 TCP **7447** 端口。在树莓派运行 `systemctl is-active robot-recorder-bridge.service robot-recorder.service`，应返回两行 `active`。
+确认机器人正在发布、UI 的 **Robot ROS domain** 与发布器一致；树莓派接收域始终为 **1**。按上文检查桥服务后，点击 **Refresh topics**。网络需允许机器人连接树莓派的 TCP **7447** 端口。在树莓派运行 `systemctl is-active robot-recorder-bridge.service robot-recorder.service`，应返回两行 `active`。
 
 在**机器人**运行 `pgrep -af '[z]enoh-bridge-ros2dds'`，应只看到一个路径包含 `zenoh-bridge-ros2dds-fixed` 的修复版桥。若有旧的手动桥或旧桥服务，先停止旧实例，不要并行运行 `/usr/bin/zenoh-bridge-ros2dds`。版本号相同不代表已包含修复。消息数仍异常时，请保留 bag 和日志交给维护者。
 

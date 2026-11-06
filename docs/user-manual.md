@@ -18,7 +18,7 @@ The supplied router reserves **`192.168.1.182`** for the Pi's Ethernet port. Wit
 
 ### 2. Start the robot's normal ROS programs
 
-Start its usual sensors/publishers, then run the installer as the **same normal ROS user**. The installer detects the ROS version, domain and workspace from the current environment or readable running ROS nodes. **Manually loading a workspace is not required in the normal setup.** Keep the robot's existing ROS domain. If detection cannot resolve the intended environment, use the troubleshooting section below.
+Start its usual sensors/publishers, then run the installer as the **same normal ROS user**. The installer detects the ROS version and initial domain from the current environment or readable running ROS nodes. It loads only the base ROS installation; no robot workspace needs to be loaded. This recorder supports standard ROS message types. Custom-type topics may still appear in the list, but are outside the supported scope. Keep the robot's existing ROS domain. If detection cannot resolve the intended environment, use the troubleshooting section below.
 
 ### 3. Install and check the bridge once
 
@@ -31,7 +31,7 @@ curl -q --noproxy '*' -fL --retry 2 --connect-timeout 5 --max-time 60 \
 bash /tmp/install_robot_bridge.sh --pi-url http://192.168.1.182:8080
 ```
 
-Enter the **robot's sudo password** if asked. Setup selects a verified x86_64 or ARM64 bridge; no user compilation is required. It prints the detected ROS version, domain and workspace. Conflicting choices require your input; when no domain information is available, it visibly defaults to **0**. Existing installations retain their saved settings and folder.
+Enter the **robot's sudo password** if asked. Setup selects a verified x86_64 or ARM64 bridge; no user compilation is required. It prints the detected ROS version and domain. If the ROS version is ambiguous, it asks you to choose. If no unique domain can be detected, it uses **0**; you can correct this in either UI later. Existing installations retain their saved settings and folder.
 
 The final check reports Ethernet, the Pi recorder, the single corrected bridge, its helper and visible topics. Follow any **FAIL** instruction before recording. A **WARN** for no topics means the publishers may not be running yet. Wait for **Setup complete**; if interrupted, fix the reported problem and rerun while the recorder is idle.
 
@@ -43,19 +43,25 @@ On the robot, open **Robot Recorder** from the application menu. Alternatively, 
 
 **http://192.168.1.182:8080**
 
-Keep the **Pi UI domain at 1**. The robot keeps its own domain; the bridge connects them. Include `http://` and `:8080`. The optional **http://robot-recorder.local:8080** depends on local-name support and may select Wi-Fi; prefer the bundle's wired address. A browser-only computer can bookmark that address and needs no installation.
+Under **Available topics**, **Robot ROS domain** shows the saved domain that the source bridge listens to. The Pi's receiving domain stays fixed at **1** and has no user selection. Include `http://` and `:8080`. The optional **http://robot-recorder.local:8080** depends on local-name support and may select Wi-Fi; prefer the bundle's wired address. A browser-only computer can bookmark that address and needs no installation.
 
 ## Everyday recording
 
 After the one-time setup, power on the bundle and robot, start the robot's publishers, then open Robot Recorder or the saved browser address. No bridge command or internet connection is required for routine local recording.
 
-1. Wait for **Ready to record**. Keep the Pi's ROS domain at **1**.
+1. Wait for **Ready to record**. Check that **Robot ROS domain** matches the robot's publishers; keep the detected value if it is correct.
 2. Click **Refresh topics**, then select the topics to save. Under **Split MCAP files**, optionally enter a size in MiB, a duration in seconds, or both. Leave both blank for one file; the first limit reached starts a new segment.
 3. Click **Begin recording**. The timer starts when the recorder subscribes to the first selected topic. Completed bag duration measures the first-to-last recorded message interval, so it may differ slightly.
 4. Click **Stop recording** and wait for finalization. The size may still increase while buffered messages are saved. Keep the Pi powered until it finishes.
 5. In **Recordings on the Pi**, use **View topics** for size, duration, total/per-topic counts and average Hz. All MCAP segments belong to the same recording. **Download** saves a TAR copy to the computer running the browser. **Delete** permanently removes that recording from the Pi.
 
 The local list shows 10 recordings per page. Available topics have an internal scrollbar. Opening the page or clicking **Refresh topics** requests one robot-local bandwidth snapshot of about one second. **—** means no usable estimate, not zero; selected topics show a combined estimate. Temporary subscribers save no sensor data and must close before recording starts. Estimates do not guarantee that every message will be recorded.
+
+### Change the robot ROS domain
+
+While the recorder is idle, enter the publishers' domain (**0–232**) under **Available topics** and click **Apply domain**. Wait for **Current: …** to confirm the value, then select topics from the refreshed list. Both the LAN and LoRa pages share this setting. The robot saves it and reuses it after reboot; rerunning the installer preserves it.
+
+This changes which domain the bridge listens to. It does not change the robot's publishers or the Pi's fixed domain **1**. A change is unavailable during recording, and recording cannot start while a change is pending. An empty/wrong domain can be corrected through the same control without SSH. If the control says **Robot connection unavailable**, check the managed bridge below; an older robot installation needs the step-3 installer update while idle.
 
 Brief warnings appear beside affected recordings; **View topics** gives details. **Data loss detected** means a loss was reported or verified; **Possible data loss** indicates a risk such as network saturation. **Robot connection unavailable** indicates an interrupted known robot link. An unflagged recording is not proof of complete source delivery.
 
@@ -133,14 +139,16 @@ This is read-only and safe during recording: it does not restart services, subsc
 
 ### ROS settings were not detected
 
-Start the intended ROS programs under your normal account, or source their usual workspace, then rerun setup. Root/container processes or domains set inside a program may not be readable. Specify only the needed overrides, replacing the example values below:
+Run setup as the normal account that runs the robot's ROS programs. Root/container processes or domains set inside a program may not be readable. An unknown or ambiguous domain defaults to **0**; use **Robot ROS domain → Apply domain** in either UI to correct it.
+
+If ROS-version detection needs an override, rerun the installer with the installed version. This example explicitly selects Humble and source domain 5:
 
 ```bash
 bash /tmp/install_robot_bridge.sh --pi-url http://192.168.1.182:8080 \
-  --ros-distro humble --domain 5 --setup "$HOME/robot_ws/install/setup.bash"
+  --ros-distro humble --domain 5
 ```
 
-`--domain` changes the robot bridge, not the robot's publishers or Pi UI. `--setup` points to an existing workspace; it does not build one. If no compatible prebuilt package is available, setup stops without replacing the existing bridge. Ask the maintainer to supply a tested package; a manual build is not part of normal user setup.
+For Jazzy use `--ros-distro jazzy`. No workspace setup path is needed. `--domain` sets the bridge's listening domain, not the publishers' domain. If no compatible prebuilt package is available, setup stops without replacing the existing bridge; ask the maintainer for a tested package.
 
 ### Check, restart or stop the robot bridge
 
@@ -179,20 +187,22 @@ systemctl --user enable --now robot-recorder-source-bridge.service
 
 No reinstall is needed. Rerunning the installer also enables automatic startup.
 
-### Pi address or robot domain changed
+### Pi address changed
 
-Stop recording first. On the **robot**, enter the new wired IP and the publishers' ROS domain. This refreshes configuration and restarts the automatic service without rebuilding:
+A robot ROS-domain change only needs **Apply domain** in either UI. If the Pi's wired IP changed, stop recording first and update the robot's saved Pi address:
 
 ```bash
 read -rp 'Pi wired IP: ' PI_IP
-read -rp 'Robot publishers ROS domain: ' ROBOT_DOMAIN
-curl -q --noproxy '*' -fL --retry 2 --connect-timeout 5 --max-time 60   "http://$PI_IP:8080/setup/install_robot_bridge.sh" -o /tmp/install_robot_bridge.sh &&
-bash /tmp/install_robot_bridge.sh --pi-url "http://$PI_IP:8080"   --configure-only --domain "$ROBOT_DOMAIN"
+curl -q --noproxy '*' -fL --retry 2 --connect-timeout 5 --max-time 60 \
+  "http://$PI_IP:8080/setup/install_robot_bridge.sh" -o /tmp/install_robot_bridge.sh &&
+bash /tmp/install_robot_bridge.sh --pi-url "http://$PI_IP:8080" --configure-only
 ```
+
+This preserves the saved robot domain and restarts the automatic bridge without rebuilding it.
 
 ### Topics missing or counts duplicated
 
-Confirm the robot's publishers are running, its domain matches the source bridge and the Pi UI uses domain **1**. Check the bridge service above, then **Refresh topics**. For a network test, the robot must reach the Pi on TCP port **7447**. On the Pi, `systemctl is-active robot-recorder-bridge.service robot-recorder.service` should return two `active` lines.
+Confirm the robot's publishers are running, its domain matches **Robot ROS domain** in the UI and the Pi receiver stays on domain **1**. Check the bridge service above, then **Refresh topics**. For a network test, the robot must reach the Pi on TCP port **7447**. On the Pi, `systemctl is-active robot-recorder-bridge.service robot-recorder.service` should return two `active` lines.
 
 On the **robot**, `pgrep -af '[z]enoh-bridge-ros2dds'` should show one corrected bridge, with `zenoh-bridge-ros2dds-fixed` in its path. Stop an old manually started bridge or its old service before using this service. Do not run `/usr/bin/zenoh-bridge-ros2dds` in parallel; its version number alone does not identify the correction. If counts remain suspicious, preserve the bag and logs for the maintainer.
 
