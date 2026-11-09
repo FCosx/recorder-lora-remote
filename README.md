@@ -6,11 +6,11 @@ A ROS 2 data recorder for robot experiments. Robots send topics to a Raspberry P
 
 ## Main features
 
-- Optional MinIO uploads: indexed MCAP Zstandard compression, automatic idle/manual modes, verified-upload badges; recording takes priority.
 - Discover and select ROS 2 topics to record; set the robot bridge ROS domain from either UI, saved across reboots.
 - Start and stop recording; split MCAP files by size or duration.
 - Inspect recording size, duration, topic message counts and average Hz; download or delete recordings.
 - Monitor recording status, free space, CPU temperature and brief warnings.
+- Optional HTTPS/S3 cloud uploads: indexed MCAP Zstandard compression, manual/idle automatic modes and verified-upload badges; recording takes priority.
 
 ## First-time setup
 
@@ -28,6 +28,12 @@ The Pi must already be configured by the maintainer; the robot needs ROS 2 Humbl
 Power on the bundle and robot, start the robot's publishers, then open **http://192.168.1.182:8080** on a computer connected to the switch. The robot bridge starts automatically and reconnects when the Pi is available; no terminal needs to stay open. A browser-only computer needs no ROS or bridge installation.
 
 Check **Robot ROS domain** against the robot publishers, then select topics and begin recording. Changes can be applied while idle and are saved on the robot. The Pi receiver stays on domain 1. After stopping, wait for finalization before inspecting the result. If the bundle address changes or a robot has a fixed Ethernet address on a different subnet, follow the manual's troubleshooting section. Local-name access is an optional shortcut.
+
+## Optional cloud access
+
+The cloud website is **https://154.8.234.96**. Upload completed recordings from the Pi, then use any internet-connected computer to sign in, browse and download cloud copies. Local recording works independently of the cloud.
+
+Ask the project maintainer for your individual account; login details are shared privately. Follow the [cloud website guide](docs/user-manual.md#cloud-website) ([中文](docs/user-manual.zh-CN.md#云端网页)).
 
 ## Optional enhancement: LoRa remote control
 

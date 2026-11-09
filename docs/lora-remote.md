@@ -111,4 +111,4 @@ After the maintainer configures cloud access, use the controls beside **Refresh 
 - MCAP files are losslessly compressed using indexed Zstandard chunks before upload. Recording takes priority: compression and transfer pause before capture starts and can resume afterward.
 - **Uploaded to cloud** appears after all files pass read-back verification. Originals stay on the Pi until you choose **Delete**. Compression needs temporary free space.
 
-The Pi uploads through its own internet connection; LoRa carries only commands and status. The maintainer supplies cloud accounts and the download address. For ROS playback, download `metadata.yaml` and every referenced `.mcap` file into the same folder.
+The Pi uploads through its own internet connection; LoRa carries only commands and status. To browse or download cloud copies, open **https://154.8.234.96** on an internet-connected computer and sign in with an individual account supplied privately by the maintainer. See the [cloud website section of the Recorder User Manual](user-manual.md#cloud-website) for account permissions, downloads and troubleshooting. LoRa control itself still needs no site network.

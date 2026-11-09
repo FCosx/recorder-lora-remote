@@ -88,7 +88,35 @@ After the maintainer configures cloud access, use the controls beside **Refresh 
 - MCAP files are losslessly compressed using indexed Zstandard chunks before upload. Recording takes priority: compression and transfer pause before capture starts and can resume afterward.
 - **Uploaded to cloud** appears after all files pass read-back verification. Originals stay on the Pi until you choose **Delete**. Compression needs temporary free space.
 
-The Pi uploads through its own internet connection; LoRa carries only commands and status. The maintainer supplies cloud accounts and the download address. For ROS playback, download `metadata.yaml` and every referenced `.mcap` file into the same folder.
+The Pi uploads through its own internet connection; LoRa carries only commands and status. Use the cloud website below to access completed uploads. For ROS playback, keep `metadata.yaml` and all referenced `.mcap` segments in the same recording folder.
+
+## Cloud website
+
+Open **https://154.8.234.96** on any computer with internet access. It does not need to be connected to the recorder's switch or have ROS, Zenoh or LoRa installed. The Pi needs its own internet connection to upload; local recording works independently of cloud access.
+
+### Sign in
+
+1. Ask the project maintainer for your **individual cloud account**. Login details are supplied privately; there is no public registration or default login in this guide.
+2. Open the website and choose **Sign in**. If prompted, set your own password of at least 12 characters, then sign in again.
+3. A researcher sees only the recorders assigned to their account. This website account is separate from the Pi, router and cloud-provider accounts. Contact the maintainer for account access or a password reset.
+
+### Browse and download
+
+- In **Recording library**, search by recording or recorder name. Each entry shows its start time, compressed size, duration and message count.
+- **View topics** shows topic names, recorded counts, average Hz and ROS types.
+- **Download bag** saves the complete TAR archive to the computer running the browser. Extract it and keep `metadata.yaml` and every referenced `.mcap` segment together. Individual files are also available under **View topics → Individual files**.
+- **Preview data** provides basic single-topic image, numeric-plot and XY point-cloud views at a chosen position. Decoding runs in your browser. If a preview cannot load, download the bag for local analysis.
+- Deleting a recording on the Pi affects the Pi copy. An uploaded cloud copy remains available; ask the maintainer about cloud retention or deletion. Sign out when finished on a shared computer.
+
+### For project administrators
+
+In **Users**, choose **Researcher**, assign the required recorder(s), then **Create account**. Share the generated temporary password privately; the user changes it at first sign-in. Use **Recorder access** to adjust permissions, **Reset password** to recover access, or **Disable** to withdraw access. Ordinary cloud users need no server or cloud-provider login.
+
+### Common problems
+
+- **Website will not open:** check the internet connection and the full `https://` address, then contact the maintainer if it remains unavailable. No special networking client is required for this cloud website.
+- **Sign-in fails:** ask the maintainer to check the account or reset its password.
+- **A recording is missing:** confirm **Uploaded to cloud** on the Pi/LoRa page, refresh the cloud library, and ask the maintainer to check your recorder permissions. An unfinished upload is not listed as complete.
 
 ## Troubleshooting
 
