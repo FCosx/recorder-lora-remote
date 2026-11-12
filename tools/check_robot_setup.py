@@ -11,9 +11,10 @@ from urllib.parse import urlsplit
 from urllib.request import ProxyHandler, build_opener
 
 if __package__:
-    from . import robot_bridge_service
+    from . import robot_bridge_service, dds_transport
 else:
     import robot_bridge_service
+    import dds_transport
 
 
 def processes(proc=Path('/proc')):
@@ -37,7 +38,7 @@ def processes(proc=Path('/proc')):
     return bridges, helpers
 
 
-def request(url, timeout=3):
+def request(url, timeout=5):
     with build_opener(ProxyHandler({})).open(url, timeout=timeout) as response:
         return json.load(response)
 
@@ -52,7 +53,8 @@ def tcp_connection(host,pid,runner=subprocess.run):
 
 
 def checks(root, pi_url, wait=10, fetch=request, route=robot_bridge_service.wired_route,
-           inspect=processes, runner=subprocess.run, connected=tcp_connection):
+           inspect=processes, runner=subprocess.run, connected=tcp_connection,
+           buffers=lambda: int(dds_transport.LIMIT.read_text().strip())):
     root = Path(root).resolve()
     rows = []
     def add(name, state, detail, next_step=None):
@@ -92,6 +94,17 @@ def checks(root, pi_url, wait=10, fetch=request, route=robot_bridge_service.wire
         'One source helper' if len(helpers) == 1 else f'{len(helpers)} source helpers; expected one',
         None if len(helpers) == 1 else 'Restart the managed bridge while the recorder is idle.')
     try:
+        limit = buffers()
+        add('DDS receive buffers', 'pass' if limit >= dds_transport.SOCKET_BYTES else 'fail',
+            f'{limit/1024**2:g} MiB kernel ceiling',
+            None if limit >= dds_transport.SOCKET_BYTES else 'Rerun robot bridge setup to restore the DDS buffer limit.')
+    except (OSError,ValueError):
+        add('DDS receive buffers','warn','Cannot read the kernel receive-buffer ceiling')
+    try:
+        # Warm metadata discovery before depending on its heartbeat. This also
+        # supports recorders predating the registration lifecycle correction.
+        topics = fetch(pi_url+'/api/topics').get('topics',[])
+        deadline = time.monotonic()+max(0,wait)
         status = fetch(pi_url+'/api/status')
         while status.get('robot_link') != 'connected' and time.monotonic() < deadline and correct:
             time.sleep(.4)
@@ -104,8 +117,12 @@ def checks(root, pi_url, wait=10, fetch=request, route=robot_bridge_service.wire
             f'{status.get("free_bytes",0)/1024**3:.1f} GiB free',
             'Free recording space before recording.' if status.get('storage_warning') else None)
         # Existing metadata-only catalog; never POST a bandwidth request or subscribe to sensor payloads.
-        topics = fetch(pi_url+'/api/topics').get('topics',[])
         count = sum(isinstance(row,dict) and row.get('name') not in ('/rosout','/parameter_events') for row in topics)
+        discovery_deadline=time.monotonic()+min(2,max(0,wait))
+        while not count and time.monotonic()<discovery_deadline and linked:
+            time.sleep(.3)
+            topics=fetch(pi_url+'/api/topics').get('topics',[])
+            count=sum(isinstance(row,dict) and row.get('name') not in ('/rosout','/parameter_events') for row in topics)
         add('Topic discovery','pass' if count else 'warn',f'{count} sensor/application topic(s) visible',
             None if count else 'Start the robot publishers, then Refresh topics. No topics alone does not prove a connection fault.')
     except (OSError,ValueError,TimeoutError) as error:

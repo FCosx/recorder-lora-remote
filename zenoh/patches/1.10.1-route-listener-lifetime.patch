@@ -1,8 +1,6 @@
-diff --git a/zenoh-plugin-ros2dds/src/route_publisher.rs b/zenoh-plugin-ros2dds/src/route_publisher.rs
-index 90b7d47..c83c613 100644
 --- a/zenoh-plugin-ros2dds/src/route_publisher.rs
 +++ b/zenoh-plugin-ros2dds/src/route_publisher.rs
-@@ -16,7 +16,7 @@ use std::{
+@@ -16,7 +16,7 @@
      collections::HashSet,
      fmt,
      ops::Deref,
@@ -11,7 +9,7 @@ index 90b7d47..c83c613 100644
      time::Duration,
  };
  
-@@ -28,6 +28,7 @@ use serde::{Serialize, Serializer};
+@@ -28,6 +28,7 @@
  use zenoh::{
      key_expr::{keyexpr, OwnedKeyExpr},
      liveliness::LivelinessToken,
@@ -19,7 +17,7 @@ index 90b7d47..c83c613 100644
      qos::{CongestionControl, Priority, Reliability},
      sample::Locality,
      Wait,
-@@ -81,6 +82,13 @@ pub struct RoutePublisher {
+@@ -81,6 +82,13 @@
          serialize_with = "serialize_pub_cache"
      )]
      zenoh_publisher: ZPublisher,
@@ -33,7 +31,7 @@ index 90b7d47..c83c613 100644
      // the local DDS Reader created to serve the route (i.e. re-publish to zenoh message coming from DDS)
      #[serde(serialize_with = "serialize_atomic_entity_guid")]
      dds_reader: Arc<AtomicDDSEntity>,
-@@ -109,6 +117,12 @@ pub struct RoutePublisher {
+@@ -109,6 +117,12 @@
  
  impl Drop for RoutePublisher {
      fn drop(&mut self) {
@@ -46,7 +44,23 @@ index 90b7d47..c83c613 100644
          self.deactivate_dds_reader();
      }
  }
-@@ -221,9 +235,11 @@ impl RoutePublisher {
+@@ -131,12 +145,14 @@
+         zenoh_key_expr: OwnedKeyExpr,
+         type_info: &Option<Arc<TypeInfo>>,
+         keyless: bool,
+-        reader_qos: Qos,
++        mut reader_qos: Qos,
+         context: Context,
+     ) -> Result<RoutePublisher, String> {
+         tracing::debug!(
+             "Route Publisher ({ros2_name} -> {zenoh_key_expr}): creation with type {ros2_type}"
+         );
++
++        live_image_qos(&ros2_type, &mut reader_qos);
+ 
+         // create the zenoh Publisher
+         // if Reader shall be TRANSIENT_LOCAL, use a PublicationCache to store historical messages
+@@ -221,9 +237,11 @@
          // (copy/move all required args for the callback)
          let dds_reader: Arc<AtomicDDSEntity> = Arc::new(DDS_ENTITY_NULL.into());
  
@@ -59,7 +73,7 @@ index 90b7d47..c83c613 100644
                  let dds_reader = dds_reader.clone();
                  let ros2_name = ros2_name.clone();
                  let ros2_type = ros2_type.clone();
-@@ -236,6 +252,8 @@ impl RoutePublisher {
+@@ -236,6 +254,8 @@
                  let publisher = publisher.clone();
  
                  move |status| {
@@ -68,7 +82,7 @@ index 90b7d47..c83c613 100644
                      tracing::debug!("{route_id} MatchingStatus changed: {status:?}");
                      if status.matching() {
                          if let Err(e) = activate_dds_reader(
-@@ -256,7 +274,6 @@ impl RoutePublisher {
+@@ -256,7 +276,6 @@
                      }
                  }
              })
@@ -76,7 +90,7 @@ index 90b7d47..c83c613 100644
              .await
              .map_err(|e| format!("Failed to listen of matching status changes: {e}",))?;
  
-@@ -269,6 +286,8 @@ impl RoutePublisher {
+@@ -269,6 +288,8 @@
                  publisher,
                  cache_size,
              },
@@ -85,3 +99,91 @@ index 90b7d47..c83c613 100644
              dds_reader,
              priority,
              _type_info: type_info.clone(),
+@@ -295,6 +316,8 @@
+     }
+ 
+     async fn announce_route(&mut self, discovered_writer_qos: &Qos) -> Result<(), String> {
++        let mut announced_qos = discovered_writer_qos.clone();
++        live_image_qos(&self.ros2_type, &mut announced_qos);
+         // only if not for an Action (since actions declare their own liveliness)
+         if !is_message_for_action(&self.ros2_name) {
+             // create associated LivelinessToken
+@@ -303,7 +326,7 @@
+                 &self.zenoh_key_expr,
+                 &self.ros2_type,
+                 self.keyless,
+-                discovered_writer_qos,
++                &announced_qos,
+             )?;
+             let ros2_name = self.ros2_name.clone();
+             self.liveliness_token = Some(self.context.zsession
+--- a/zenoh-plugin-ros2dds/src/route_subscriber.rs
++++ b/zenoh-plugin-ros2dds/src/route_subscriber.rs
+@@ -35,7 +35,7 @@
+     },
+     liveliness_mgt::new_ke_liveliness_sub,
+     qos::{History, Qos},
+-    qos_helpers::is_transient_local,
++    qos_helpers::{is_transient_local, live_image_qos},
+     ros2_utils::{is_message_for_action, ros2_message_type_to_dds_type},
+     routes_mgr::Context,
+     serialize_option_as_bool, vec_into_raw_parts, LOG_PAYLOAD,
+@@ -117,6 +117,7 @@
+         mut writer_qos: Qos,
+         context: Context,
+     ) -> Result<RouteSubscriber, String> {
++        live_image_qos(&ros2_type, &mut writer_qos);
+         let transient_local = is_transient_local(&writer_qos);
+         tracing::debug!("Route Subscriber ({zenoh_key_expr} -> {ros2_name}): creation with type {ros2_type} (transient_local:{transient_local})");
+ 
+--- a/zenoh-plugin-ros2dds/src/qos_helpers.rs
++++ b/zenoh-plugin-ros2dds/src/qos_helpers.rs
+@@ -12,6 +12,48 @@
+ //   ZettaScale Zenoh Team, <zenoh@zettascale.tech>
+ //
+ use cyclors::{qos::*, DDS_LENGTH_UNLIMITED};
++
++// Recorder camera streams represent live frames. A driver using SYSTEM_DEFAULT
++// can resolve to TRANSIENT_LOCAL, causing two bridge caches to replay the same
++// old frame on each recording. Apply this on both DDS hops; changing only a
++// rosbag subscription does not suppress Zenoh's historical fetch.
++// Keep calibration, TF, maps and every non-image type's durability unchanged.
++pub fn live_image_qos(ros2_type: &str, qos: &mut Qos) {
++    if matches!(ros2_type, "sensor_msgs/msg/Image" | "sensor_msgs/msg/CompressedImage") {
++        qos.durability = Some(Durability { kind: DurabilityKind::VOLATILE });
++        qos.durability_service = None;
++    }
++}
++
++#[cfg(test)]
++mod recorder_tests {
++    use super::*;
++
++    #[test]
++    fn live_images_do_not_replay_history() {
++        for typ in ["sensor_msgs/msg/Image", "sensor_msgs/msg/CompressedImage"] {
++            let mut qos = Qos::default();
++            qos.durability = Some(Durability { kind: DurabilityKind::TRANSIENT_LOCAL });
++            qos.durability_service = Some(DurabilityService::default());
++            live_image_qos(typ, &mut qos);
++            assert!(!is_transient_local(&qos));
++            assert!(qos.durability_service.is_none());
++        }
++    }
++
++    #[test]
++    fn other_retained_topics_keep_their_semantics() {
++        for typ in ["sensor_msgs/msg/CameraInfo", "tf2_msgs/msg/TFMessage",
++                    "nav_msgs/msg/OccupancyGrid", "std_msgs/msg/String"] {
++            let mut qos = Qos::default();
++            qos.durability = Some(Durability { kind: DurabilityKind::TRANSIENT_LOCAL });
++            qos.durability_service = Some(DurabilityService::default());
++            live_image_qos(typ, &mut qos);
++            assert!(is_transient_local(&qos));
++            assert!(qos.durability_service.is_some());
++        }
++    }
++}
+ 
+ pub fn get_history_or_default(qos: &Qos) -> History {
+     match &qos.history {

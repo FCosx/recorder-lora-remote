@@ -14,6 +14,8 @@ from urllib.error import HTTPError
 from urllib.parse import urlsplit
 from urllib.request import ProxyHandler, Request as HTTPRequest, build_opener
 
+from hardware_status import cpu_temperature
+
 from .common import SerialLink
 from .protocol import (
     ROBOT_DOMAIN, DOMAIN_COMMAND, DOMAIN_STATUS_REQUEST, CLOUD_TELEMETRY, CLOUD_PHASES, CLOUD_REACH, CATALOG_REQUEST, CATALOG_RESPONSE, COMMAND_LIFETIME, MAX_PAYLOAD, RESPONSE,
@@ -161,12 +163,12 @@ def unsigned(value, maximum):
 
 
 class Agent:
-    def __init__(self, api, journal, clock=time.monotonic, temperature_path="/sys/class/thermal/thermal_zone0/temp"):
+    def __init__(self, api, journal, clock=time.monotonic, temperature_path=None):
         self.api = api
         self.journal = journal
         self.clock = clock
         self.boot = secrets.token_bytes(8)
-        self.temperature_path = Path(temperature_path)
+        self.temperature_path = Path(temperature_path) if temperature_path is not None else None
         self.catalog = None
         self.catalog_request_id = None
         self.recording_transfers = {}
@@ -385,7 +387,8 @@ class Agent:
         flags |= int(health.get("state") == "error") << 3
         try:
             value = status.get("temperature_c")
-            temperature = int(round(value * 10)) if value is not None else int(round(float(self.temperature_path.read_text().strip()) / 100))
+            value = value if value is not None else cpu_temperature(self.temperature_path)
+            temperature = int(round(value * 10)) if value is not None else 32767
             if not -32768 <= temperature < 32767:
                 temperature = 32767
         except (OSError, ValueError):

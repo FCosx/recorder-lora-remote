@@ -18,7 +18,7 @@ def build_bundle(root, config_path, destination, encrypted_pairing=None):
     for path in (root / "lora").glob("*.py"):
         files[path.relative_to(root).as_posix()] = path.read_bytes()
     for name in ("lora/remote.html", "tools/lora_recorder.py", "tools/lora_offline_bootstrap.py",
-                 "lora/licenses/pyserial-LICENSE.txt", "tools/desktop_shortcuts.py"):
+                 "lora/licenses/pyserial-LICENSE.txt", "tools/desktop_shortcuts.py", "hardware_status.py"):
         files[name] = (root / name).read_bytes()
     for name in ('lora-remote.md','lora-remote.en.md','lora-remote.zh-CN.md',
                  'user-manual.md','user-manual.en.md','user-manual.zh-CN.md'):

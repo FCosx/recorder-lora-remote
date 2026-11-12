@@ -25,12 +25,12 @@ class SetupCheckTests(unittest.TestCase):
             inspect=lambda:([{'pid':1,'executable':str(self.root/'bin/zenoh-bridge-ros2dds-fixed')}] if bridges is None else bridges,
                             [{'pid':2}] if helpers is None else helpers),
             runner=lambda *a,**kw:subprocess.CompletedProcess(a,0 if active else 3,'active' if active else 'inactive',''),
-            connected=lambda host,pid:connected)
+            connected=lambda host,pid:connected,buffers=lambda:8*1024**2)
 
     def test_success_uses_only_existing_readonly_metadata_apis(self):
         value=self.run_check()
         self.assertTrue(value['ok'])
-        self.assertEqual(self.calls,['http://192.168.1.182:8080/api/status','http://192.168.1.182:8080/api/topics'])
+        self.assertEqual(self.calls,['http://192.168.1.182:8080/api/topics','http://192.168.1.182:8080/api/status'])
         self.assertFalse(list(self.root.iterdir()))
 
     def test_no_sensor_publishers_is_warning_not_false_failure(self):
@@ -38,6 +38,15 @@ class SetupCheckTests(unittest.TestCase):
         value=self.run_check()
         self.assertTrue(value['ok'])
         self.assertEqual(value['checks'][-1]['state'],'warn')
+
+    def test_discovery_is_warmed_before_reading_heartbeat_on_older_recorders(self):
+        self.status['robot_link']='unknown'
+        previous=self.fetch
+        def fetch(url):
+            if url.endswith('/api/topics'):self.status['robot_link']='connected'
+            return previous(url)
+        self.fetch=fetch
+        self.assertTrue(self.run_check()['ok'])
 
     def test_checks_are_safe_during_recording(self):
         self.status['state']='recording'

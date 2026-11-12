@@ -12,6 +12,8 @@ from tools import robot_bridge_service as service
 
 class BridgeServiceTests(unittest.TestCase):
     def setUp(self):
+        transport=patch('tools.dds_transport.configure',return_value={'rmem_max':8388608,'changed':False})
+        self.transport=transport.start();self.addCleanup(transport.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)

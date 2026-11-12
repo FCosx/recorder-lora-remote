@@ -183,6 +183,12 @@ def install(args):
         setups = setup_files(args.ros_distro, environment={})
     else:
         setups = setup_files(args.ros_distro, extra=args.setup)
+    if __package__:
+        from . import dds_transport
+    else:
+        import dds_transport
+    dds_transport.configure()
+    dds_transport.write_source_profile(root)
     values = {'version': 2, 'root': str(root), 'config': str(config), 'ros_distro': args.ros_distro,
               'domain': domain, 'pi_url': args.pi_url.rstrip('/'),
               'setup_files': setups}

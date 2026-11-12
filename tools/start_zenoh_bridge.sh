@@ -13,6 +13,11 @@ exec 9>"${XDG_RUNTIME_DIR:-/tmp}/robot-recorder-bridge-$UID.lock"
 flock -n 9 || { echo 'A recorder bridge launcher is already running.' >&2; exit 1; }
 unset ROS_LOCALHOST_ONLY
 export ROS_DISTRO=${ROS_DISTRO:-jazzy}
+# Use the managed buffer-only profile unless an operator supplied a custom one.
+dds_profile="$project_dir/zenoh/source-cyclonedds.xml"
+if [[ -z "${CYCLONEDDS_URI:-}" && -f "$dds_profile" ]]; then
+  export CYCLONEDDS_URI="file://$dds_profile"
+fi
 helper="$project_dir/tools/robot_bandwidth.py"
 [[ -f "$helper" ]] || { echo 'Robot rate helper missing. Rerun robot bridge setup.' >&2; exit 1; }
 source_domain=$(python3 - "$config" <<'PYDOMAIN'

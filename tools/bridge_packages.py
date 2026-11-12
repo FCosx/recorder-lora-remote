@@ -11,9 +11,9 @@ import tarfile
 import tempfile
 
 VERSION = '1.10.1'
-PATCH_SHA256 = '30462d2b7c3a20360dc968d5b4f68ac219061d2bd10f1940f88fbb739bc03827'
+PATCH_SHA256 = '9d3b9403989b199d7ec2cad9a64840c74859404d1a7910b171ff8fc644f58e58'
 SOURCE_SHA256 = '2c66aec0ab999d346c17497f2a6e84600478e57a197bb8c1dc5e6dd5bbbe5c03'
-PACKAGE_ID = VERSION + '-route-listener-v1'
+PACKAGE_ID = VERSION + '-route-listener-v2'
 ARCHES = {'amd64': 'x86_64', 'x86_64': 'x86_64', 'arm64': 'aarch64', 'aarch64': 'aarch64'}
 PACKAGE_FILES = ('manifest.json',) + tuple(f'bridge-{PACKAGE_ID}-{arch}.tar.gz'
                                         for arch in ('x86_64', 'aarch64'))

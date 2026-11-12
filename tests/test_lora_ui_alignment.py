@@ -119,15 +119,9 @@ class AlignmentTests(unittest.TestCase):
         self.remote.accept_snapshot(replace(self.snapshot(),boot=b'new-boot'))
         self.assertIsNone(self.remote.data_transfer)
         self.assertFalse(self.remote.status()['completion_pending'])
-    def test_lan_summary_and_temperature_reading(self):
+    def test_lan_recording_summary_reads_metadata_only_when_requested(self):
         try:import app
         except ImportError:self.skipTest('Pi backend not in standalone remote repo')
-        with patch.object(Path,'read_text',return_value='51200'):
-            self.assertEqual(app.cpu_temperature(),51.2)
-        with patch.object(Path,'read_text',return_value='NaN'):
-            self.assertIsNone(app.cpu_temperature())
-        with patch.object(Path,'read_text',side_effect=OSError):
-            self.assertIsNone(app.cpu_temperature())
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);bag=root/'recording-test';bag.mkdir();(bag/'metadata.yaml').write_text('test');(bag/'bag_0.mcap').write_bytes(bytes(42))
             info={'started_at':'2026-10-29T12:00:00','duration_seconds':12.5,'total_messages':25}

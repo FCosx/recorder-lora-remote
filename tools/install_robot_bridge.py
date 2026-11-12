@@ -28,6 +28,7 @@ ASSETS = {
     'robot_bandwidth.py': 'tools/robot_bandwidth.py',
     'robot_control_client.py': 'tools/robot_control_client.py',
     'robot_bridge_service.py': 'tools/robot_bridge_service.py',
+    'dds_transport.py': 'tools/dds_transport.py',
     'route-listener-lifetime.patch': 'zenoh/patches/1.10.1-route-listener-lifetime.patch',
     'install_robot_bridge.py': 'tools/install_robot_bridge.py',
     'robot_environment.py': 'tools/robot_environment.py',

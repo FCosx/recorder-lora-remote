@@ -2,9 +2,11 @@
 
 [English](lora-remote.md) | **简体中文**
 
-记录器的主要使用方式是通过局域网页面控制树莓派录制。先按 [记录器使用手册](user-manual.zh-CN.md) 完成以太网与 Zenoh 设置；本页用于需要远距离控制的用户。
+记录器的主要使用方式是通过局域网页面控制记录器录制。先按 [记录器使用手册](user-manual.zh-CN.md) 完成以太网与 Zenoh 设置；本页用于需要远距离控制的用户。
 
-通过 USB LoRa 电台选择 ROS 2 话题、开始/停止录制，并查看树莓派状态。数据保存在树莓派，不通过 LoRa 传输。
+通过 USB LoRa 电台选择 ROS 2 话题、开始/停止录制，并查看记录器状态。数据保存在记录器，不通过 LoRa 传输。
+
+此 Lenovo 分支保持原有协议和配对；远端无需 ROS，部分 UI 文案仍称 Pi。
 
 ## 首次安装
 
@@ -12,14 +14,14 @@
 
 ```bash
 curl -fL --retry 3 --retry-all-errors \
-  https://github.com/FCosx/recorder-lora-remote/releases/latest/download/recorder-lora-remote.pyz \
+  https://github.com/FCosx/recorder-lora-remote/releases/download/lenovo-v0.13.0/recorder-lora-remote.pyz \
   -o recorder-lora-remote.pyz &&
 python3 recorder-lora-remote.pyz install
 ```
 
 首次安装输入维护者提供的配对口令，输入时不显示字符。安装包包含加密配对文件；解密后的凭据仅保存于本机。已有配对更新时无需再次输入，原配对和命令编号会保留。
 
-下载需要互联网，也可用 U 盘复制安装包。安装及日常控制不需要树莓派 IP、SSH 或现场网络。
+下载需要互联网，也可用 U 盘复制安装包。安装及日常控制不需要记录器 IP、SSH 或现场网络。
 
 ## 每次使用
 
@@ -37,29 +39,29 @@ python3 -B ~/robot-recorder/tools/lora_recorder.py open
 python3 -B ~/robot-recorder/tools/lora_recorder.py remote-stop
 ```
 
-停止控制端不会结束树莓派正在进行的录制。控制端默认不开机自启，使用时打开入口即可。同一用户账号下，同一配对只允许一个控制端；换另一台笔记本控制前，先停止原笔记本上的控制端。
+停止控制端不会结束记录器正在进行的录制。控制端默认不开机自启，使用时打开入口即可。同一用户账号下，同一配对只允许一个控制端；换另一台笔记本控制前，先停止原笔记本上的控制端。
 
-也可继续使用前台终端方式：先停止后台控制端，再运行 `python3 -B ~/robot-recorder/tools/lora_recorder.py remote` 并保留终端；Ctrl+C 停止该前台程序。两种方式都不需要树莓派 IP 或网络连接。
+也可继续使用前台终端方式：先停止后台控制端，再运行 `python3 -B ~/robot-recorder/tools/lora_recorder.py remote` 并保留终端；Ctrl+C 停止该前台程序。两种方式都不需要记录器 IP 或网络连接。
 
-状态请求在收到回复后默认等待 1 秒，再加无线传输时间。录制计时器会在本机连续递增并标为估计；大小、空间等数值以树莓派回复为准。
+状态请求在收到回复后默认等待 1 秒，再加无线传输时间。录制计时器会在本机连续递增并标为估计；大小、空间等数值以记录器回复为准。
 
-开始前可设置 `Split MCAP files` 的 MiB 或秒数，留空关闭；两项都设置时先达到的条件触发切包。全部切分文件仍归于同一录制。右上角显示树莓派 CPU 温度。
+开始前可设置 `Split MCAP files` 的 MiB 或秒数，留空关闭；两项都设置时先达到的条件触发切包。全部切分文件仍归于同一录制。右上角显示记录器 CPU 温度。
 
 ## 机器人 ROS 域
 
-**Available topics → Robot ROS domain** 与树莓派本地网页共用。空闲时输入发布器的域（**0–232**），点击 **Apply domain**，等待 **Current: …** 确认后使用刷新的话题列表。机器人会保存该值，重启后继续使用；首次无法识别域时默认 **0**。
+**Available topics → Robot ROS domain** 与记录器本地网页共用。空闲时输入发布器的域（**0–232**），点击 **Apply domain**，等待 **Current: …** 确认后使用刷新的话题列表。机器人会保存该值，重启后继续使用；首次无法识别域时默认 **0**。
 
-此操作只改变源端桥监听的域，不会修改发布器或树莓派固定的接收域 **1**。录制和改域不能同时进行。即使选到没有话题的域，也能通过 LoRa 改回，远端笔记本无需 SSH 或树莓派 IP。机器人到树莓派的以太网链路及新版源端桥仍须运行；控件不可用时按记录器手册检查桥服务。
+此操作只改变源端桥监听的域，不会修改发布器或记录器固定的接收域 **1**。录制和改域不能同时进行。即使选到没有话题的域，也能通过 LoRa 改回，远端笔记本无需 SSH 或记录器 IP。机器人到记录器的以太网链路及新版源端桥仍须运行；控件不可用时按记录器手册检查桥服务。
 
 ## 可选：预估话题带宽
 
-打开页面或点击 `Refresh topics` 时，会请求一次机器人端的快速带宽估算：所有话题同时短暂采样约 1 秒，正常链路下目标是在约 1–2 秒内返回；超时或消息不足时显示 `—`，不代表零速率。话题旁显示估算速率，勾选后显示合计，结果保留至下次刷新。LoRa 无线传回还需额外时间。临时订阅仅在机器人内存中计数，不保存消息，也不把传感器数据传给树莓派做估算。从任一页面开始录制时，树莓派先等待机器人确认已关闭临时订阅，再启动录制；未确认时不会开始。估算值可能受丢包或突发发送影响，不保证录制完整或存储跟得上。
+打开页面或点击 `Refresh topics` 时，会请求一次机器人端的快速带宽估算：所有话题同时短暂采样约 1 秒，正常链路下目标是在约 1–2 秒内返回；超时或消息不足时显示 `—`，不代表零速率。话题旁显示估算速率，勾选后显示合计，结果保留至下次刷新。LoRa 无线传回还需额外时间。临时订阅仅在机器人内存中计数，不保存消息，也不把传感器数据传给记录器做估算。从任一页面开始录制时，记录器先等待机器人确认已关闭临时订阅，再启动录制；未确认时不会开始。估算值可能受丢包或突发发送影响，不保证录制完整或存储跟得上。
 
 已连接过的机器人链路连续约 4–5 秒无响应时，会显示 **Robot connection unavailable**；LoRa 还需无线传输时间。录制继续进行，恢复连接后，该次录制仍保留中断提示，可在 `View topics` 查看次数。监测复用现有助手心跳，不增加传感器订阅，也不统计丢失消息数。当前域尚未发现过机器人助手时不显示此警告；更短的中断可能无法检出。
 
 ## 查看录制
 
-`Refresh recordings` 一次加载全部已完成录制，无需翻页，显示名称、开始时间、大小、时长和消息数。`View topics` 加载话题及其消息数、Hz 和类型；`Delete` 确认后永久删除该录制的全部文件，仅空闲时可用。异常录制显示简短 Warning/Error 原因，详情在 `View topics` 中。列表及详情按需通过 LoRa 分块传输，不提供下载。树莓派代理需支持这些功能，由维护者更新。
+`Refresh recordings` 一次加载全部已完成录制，无需翻页，显示名称、开始时间、大小、时长和消息数。`View topics` 加载话题及其消息数、Hz 和类型；`Delete` 确认后永久删除该录制的全部文件，仅空闲时可用。异常录制显示简短 Warning/Error 原因，详情在 `View topics` 中。列表及详情按需通过 LoRa 分块传输，不提供下载。记录器代理需支持这些功能，由维护者更新。
 
 录制结束后自动刷新列表一次，取得元数据后短暂显示实际时长。再次开始录制时会清除上一段录制的完成提示。当前状态包含 MCAP 文件数；错误提示会保留，可用 `Dismiss` 收起。空间条与低空间状态清楚区分可录制和存储不足。
 
@@ -70,11 +72,11 @@ python3 -B ~/robot-recorder/tools/lora_recorder.py remote-stop
 - 找不到电台：检查 USB 连接及 CH340 驱动；BRLTTY 可能占用串口。
 - 缺少 OpenSSL：Ubuntu 运行 `sudo apt install openssl`。
 - 启动入口报错：运行 `journalctl --user -u robot-recorder-lora-remote.service -n 20 --no-pager` 查看原因。旧的前台控制端仍在运行时，先按 Ctrl+C 停止，再打开新入口。
-- 无线无回复：检查两端电源、天线、匹配的电台设置，以及树莓派录制/LoRa 服务。
+- 无线无回复：检查两端电源、天线、匹配的电台设置，以及记录器录制/LoRa 服务。
 
 配对口令需私下交付；不要公开解密后的 `remote.json` 或私有预配对安装包。配对文件加密不等于无线数据加密。远距离效果需实测。
 
-安装包含 pySerial 3.5，许可见 [第三方说明](https://github.com/FCosx/recorder-lora-remote/blob/main/THIRD_PARTY_NOTICES.md)。
+安装包含 pySerial 3.5，许可见 [第三方说明](https://github.com/FCosx/recorder-lora-remote/blob/lenovo-recorder/THIRD_PARTY_NOTICES.md)。
 
 ## 状态更新间隔
 
@@ -94,7 +96,7 @@ python3 -B ~/robot-recorder/tools/lora_recorder.py remote-stop
 python3 -B ~/robot-recorder/tools/lora_recorder.py open
 ```
 
-每次只运行一个控制端；无需重新配对或重启树莓派。
+每次只运行一个控制端；无需重新配对或重启记录器。
 
 此设置只影响 LoRa 状态轮询，不改变以太网/Zenoh 数据通道或录制参数。两秒版本 v0.4.0 仍保留供完整回退；远距离性能需在实际位置验证。
 
@@ -103,10 +105,10 @@ python3 -B ~/robot-recorder/tools/lora_recorder.py open
 维护者配置好云端连接后，在 **Recordings on the Pi** 区域、**Refresh recordings** 旁操作：
 
 - 初始为 **Manual upload（手动上传）**：在需要上传的录制条目上点击 **Upload to cloud**。
-- 切换到 **Automatic upload（自动上传）** 并确认后，树莓派空闲时自动上传已完成的录制，也包括以前保存的录制。
+- 切换到 **Automatic upload（自动上传）** 并确认后，记录器空闲时自动上传已完成的录制，也包括以前保存的录制。
 - **Stop uploads** 停止压缩、传输及排队任务，并切回手动模式。需要继续时，点击对应录制的 **Resume upload**；部分准备或校验可能重新执行。
-- **Cloud connected** 表示树莓派可以访问云端。云端不可达时，不能新建上传任务或切换模式；LoRa 连接正常不代表云端可达。
+- **Cloud connected** 表示记录器可以访问云端。云端不可达时，不能新建上传任务或切换模式；LoRa 连接正常不代表云端可达。
 - MCAP 先无损压缩为带索引的 Zstandard MCAP，再上传。录制始终优先：开始录制前暂停压缩和传输，录制结束后可继续。
-- 所有文件通过读回校验后才显示 **Uploaded to cloud**。原文件保留在树莓派，由用户决定是否删除；压缩需要临时空间。
+- 所有文件通过读回校验后才显示 **Uploaded to cloud**。原文件保留在记录器，由用户决定是否删除；压缩需要临时空间。
 
-上传使用树莓派自己的互联网连接；LoRa 只传控制和状态。需要查看或下载云端副本时，在能上网的电脑打开 **https://154.8.234.96**，使用维护者私下提供的个人账号登录。账号权限、下载及常见问题见[记录器手册的云端网页部分](user-manual.zh-CN.md#云端网页)。LoRa 控制本身仍无需现场网络。
+上传使用记录器自己的互联网连接；LoRa 只传控制和状态。需要查看或下载云端副本时，在能上网的电脑打开 **https://154.8.234.96**，使用维护者私下提供的个人账号登录。账号权限、下载及常见问题见[记录器手册的云端网页部分](user-manual.zh-CN.md#云端网页)。LoRa 控制本身仍无需现场网络。

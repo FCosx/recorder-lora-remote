@@ -2,20 +2,20 @@
   "format": 1,
   "bridge_version": "1.10.1",
   "source_sha256": "2c66aec0ab999d346c17497f2a6e84600478e57a197bb8c1dc5e6dd5bbbe5c03",
-  "patch_sha256": "30462d2b7c3a20360dc968d5b4f68ac219061d2bd10f1940f88fbb739bc03827",
+  "patch_sha256": "9d3b9403989b199d7ec2cad9a64840c74859404d1a7910b171ff8fc644f58e58",
   "packages": [
     {
       "bridge_version": "1.10.1",
       "arch": "aarch64",
       "min_glibc": "2.35",
       "source_sha256": "2c66aec0ab999d346c17497f2a6e84600478e57a197bb8c1dc5e6dd5bbbe5c03",
-      "patch_sha256": "30462d2b7c3a20360dc968d5b4f68ac219061d2bd10f1940f88fbb739bc03827",
-      "binary_sha256": "e3a3f2407982cc2cad28a469f4c3ff6636584fe4290aa9d8f9a56b209aa6792e",
+      "patch_sha256": "9d3b9403989b199d7ec2cad9a64840c74859404d1a7910b171ff8fc644f58e58",
+      "binary_sha256": "b7561122558c599850779b9f128f07f4268696b7f73522d786facad504b33a95",
       "rust_version": "1.97.1",
       "target": "aarch64-unknown-linux-gnu.2.35",
       "zig_version": "0.14.1",
-      "file": "bridge-1.10.1-route-listener-v1-aarch64.tar.gz",
-      "sha256": "8aa3941215d8bd4f66ade4fb89870c9be105f6375af3b767aef07a61a15caf65",
+      "file": "bridge-1.10.1-route-listener-v2-aarch64.tar.gz",
+      "sha256": "95bb5b14977e78e638a3d466228889dcaf38c05aaf8768212f94455af88e1122",
       "ros_distros": [
         "humble",
         "jazzy"
@@ -26,13 +26,13 @@
       "arch": "x86_64",
       "min_glibc": "2.35",
       "source_sha256": "2c66aec0ab999d346c17497f2a6e84600478e57a197bb8c1dc5e6dd5bbbe5c03",
-      "patch_sha256": "30462d2b7c3a20360dc968d5b4f68ac219061d2bd10f1940f88fbb739bc03827",
-      "binary_sha256": "31dfda76cc0a83fe4b49466c718497f040467d17ae8cf3c50981dfb3000910ae",
+      "patch_sha256": "9d3b9403989b199d7ec2cad9a64840c74859404d1a7910b171ff8fc644f58e58",
+      "binary_sha256": "7953a57a8a59a907e9cf05f848f8de2bf5e033cdd0a956880928ab400c92c6f7",
       "rust_version": "1.97.1",
       "target": "x86_64-unknown-linux-gnu.2.35",
       "zig_version": "0.14.1",
-      "file": "bridge-1.10.1-route-listener-v1-x86_64.tar.gz",
-      "sha256": "fac66cf88dd80a6bb0702b21efeb944fddaeb0a1f2bb8fa4711793614ed6357a",
+      "file": "bridge-1.10.1-route-listener-v2-x86_64.tar.gz",
+      "sha256": "1ea1ddd43c2eae9ab1273184db24ea8431543f8d9d8a5b0a1a00dfa760affc16",
       "ros_distros": [
         "humble",
         "jazzy"
